@@ -83,6 +83,7 @@ pub enum TranscriptEvent {
         attempt: u32,
         next_in: Duration,
         error: String,
+        offline_after: u32,
     },
     Reconnected,
     Fatal(Error),
@@ -144,7 +145,7 @@ impl Client {
                         failures = failures.saturating_add(1);
                         let next_in = policy.delay(failures, &mut rng);
                         trace_lost(failures, next_in, &error);
-                        yield TranscriptEvent::Lost { attempt: failures, next_in, error };
+                        yield TranscriptEvent::Lost { attempt: failures, next_in, error, offline_after: policy.offline_after };
                         tokio::time::sleep(next_in).await;
                         reconnecting = true;
                         continue;
@@ -224,7 +225,7 @@ impl Client {
                 let error = stream_error.unwrap_or_else(|| "stream ended".to_owned());
                 let next_in = policy.delay(failures, &mut rng);
                 trace_lost(failures, next_in, &error);
-                yield TranscriptEvent::Lost { attempt: failures, next_in, error };
+                yield TranscriptEvent::Lost { attempt: failures, next_in, error, offline_after: policy.offline_after };
                 tokio::time::sleep(next_in).await;
                 reconnecting = true;
             }

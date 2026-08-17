@@ -453,6 +453,7 @@ fn ut_180_and_ut_181_stopped_models_never_start_or_reconnect() {
             attempt: 5,
             next_in: Duration::from_secs(10),
             error: "gone".into(),
+            offline_after: 5,
         }),
     );
     assert!(matches!(stopped.footer, FooterState::Stopped { .. }));
@@ -503,6 +504,7 @@ fn ut_200_stream_loss_transitions_footer() {
             attempt: 3,
             next_in: Duration::from_secs(1),
             error: "gone".into(),
+            offline_after: 5,
         }),
     );
     assert_eq!(model.footer, FooterState::Reconnecting(3));
@@ -514,7 +516,27 @@ fn ut_200_stream_loss_transitions_footer() {
             attempt: 5,
             next_in: Duration::from_secs(10),
             error: "gone".into(),
+            offline_after: 5,
         }),
     );
     assert_eq!(model.footer, FooterState::Offline);
+}
+
+#[test]
+fn ut_offline_threshold_reads_event_policy_value() {
+    let mut model = model();
+    update(
+        &mut model,
+        Msg::Stream(TranscriptEvent::Lost {
+            attempt: 2,
+            next_in: Duration::from_secs(1),
+            error: "gone".into(),
+            offline_after: 2,
+        }),
+    );
+    assert_eq!(
+        model.footer,
+        FooterState::Offline,
+        "attempt reaching a non-default offline_after must go offline, not wait for the literal 5"
+    );
 }

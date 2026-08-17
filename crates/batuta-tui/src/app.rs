@@ -285,8 +285,12 @@ fn apply_stream(model: &mut Model, event: TranscriptEvent) -> Vec<Cmd> {
             model.dirty = true;
             Vec::new()
         }
-        TranscriptEvent::Lost { attempt, .. } => {
-            model.footer = if attempt >= 5 {
+        TranscriptEvent::Lost {
+            attempt,
+            offline_after,
+            ..
+        } => {
+            model.footer = if attempt >= offline_after {
                 FooterState::Offline
             } else {
                 FooterState::Reconnecting(attempt)
