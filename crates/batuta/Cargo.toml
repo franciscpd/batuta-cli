@@ -1,0 +1,11 @@
+[package]
+name = "batuta"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+batuta-tui = { path = "../batuta-tui" }
+clap.workspace = true
+compozy-client = { path = "../compozy-client" }
