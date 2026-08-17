@@ -1,0 +1,44 @@
+---
+source: crates/batuta-tui/tests/render.rs
+expression: "render(model(), 120, 40)"
+---
+batuta · batuta-cli · sess-807cee9774b33f68 · batuta · "Analisar e implementar projeto conforme documentação …" · active
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+beginning of transcript
+▸ user
+  Nos vamos analisar para implementar o projeto
+
+▸ batuta
+  Vou começar pelo gate de entrega.
+
+  - ler contrato
+  - implementar▍
+  ▸ reasoning (14 lines)
+  ✓ mcp__compozy-hosted-tools__compozy__config_get   loops.inputs.batuta-deliver.auto_commit
+  ✗ mcp__compozy-hosted-tools__compozy__provider_models_list
+  ▶ Task   Track A: daemon API facts
+  ─ prompt_accepted · turn accepted ─
+  ! file_mutation_unverified · executor edited files without verification
+  ▪ approval  request_id req_3f9c  turn turn-073fb634a25a1f32  Bash: rm -rf build/  read-only here
+  file: report.txt (text/plain)
+  unknown part: future-part
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+j/k move  Enter expand  t reasoning  G newest  g oldest  q quit                                                     live

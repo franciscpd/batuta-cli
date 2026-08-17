@@ -1,0 +1,48 @@
+---
+source: crates/batuta-tui/tests/render.rs
+expression: rendered
+---
+batuta · batuta-cli · sess-807cee9774b33f68 · batuta · "Analisar e implementar projeto co…" · active
+────────────────────────────────────────────────────────────────────────────────────────────────────
+beginning of transcript
+▸ user
+  Nos vamos analisar para implementar o projeto
+
+────────────────────────────────────────────────────────────────────────────────────────────────────
+j/k move  Enter expand  t reasoning  G newest  g oldest  q q  stopped — sending a prompt restarts it
+---
+batuta · batuta-cli · sess-807cee9774b33f68 · batuta · "Analisar e implementar projeto co…" · active
+────────────────────────────────────────────────────────────────────────────────────────────────────
+beginning of transcript
+▸ user
+  Nos vamos analisar para implementar o projeto
+
+────────────────────────────────────────────────────────────────────────────────────────────────────
+j/k move  Enter expand  t reasoning  G newest  g oldest  q q  stream lost — reconnecting (attempt 3)
+---
+batuta · batuta-cli · sess-807cee9774b33f68 · batuta · "Analisar e implementar projeto co…" · active
+────────────────────────────────────────────────────────────────────────────────────────────────────
+beginning of transcript
+▸ user
+  Nos vamos analisar para implementar o projeto
+
+────────────────────────────────────────────────────────────────────────────────────────────────────
+j/k move  Enter expand  t reasoning  G newest  g oldest  q quit    daemon offline — last state shown
+---
+batuta · batuta-cli · sess-807cee9774b33f68 · batuta · "Analisar e implementar projeto co…" · active
+────────────────────────────────────────────────────────────────────────────────────────────────────
+beginning of transcript
+▸ user
+  Nos vamos analisar para implementar o projeto
+
+────────────────────────────────────────────────────────────────────────────────────────────────────
+j/k move  Enter expand  t reasoning  G newest  g oldest  q quit      resynchronized (epoch_mismatch)
+---
+batuta · batuta-cli · sess-807cee9774b33f68 · batuta · "Analisar e implementar projeto co…" · active
+────────────────────────────────────────────────────────────────────────────────────────────────────
+beginning of transcript
+▸ user
+  Nos vamos analisar para implementar o projeto
+
+────────────────────────────────────────────────────────────────────────────────────────────────────
+j/k move  Enter expand  t reasoning  G newest  g oldest  q quit              3 new below — G to jump

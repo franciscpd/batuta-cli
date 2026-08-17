@@ -4,13 +4,14 @@ mod exit;
 mod logging;
 mod relative_time;
 mod sessions;
+mod tail;
+mod terminal;
 mod version;
 mod workspace;
 
 use clap::Parser;
 use cli::{Cli, Command, DaemonArg};
 use compozy_client::{Client, TransportOrder};
-use exit::AppError;
 use std::{path::PathBuf, time::Duration};
 
 fn main() {
@@ -42,9 +43,9 @@ async fn run_command(cli: Cli) -> i32 {
         Command::Doctor => doctor::run(&cli).await,
         Command::Sessions { all_agents, limit } => sessions::run(&cli, all_agents, limit).await,
         Command::Tail {
-            session: _,
-            all_agents: _,
-        } => Err(AppError::unavailable("tail is not available yet")),
+            ref session,
+            all_agents,
+        } => tail::run(&cli, session.as_deref(), all_agents).await,
     };
 
     match result {

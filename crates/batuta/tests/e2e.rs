@@ -1,17 +1,21 @@
 use assert_cmd::Command;
 use compozy_testkit::{Daemon, StartOutcome};
 use predicates::prelude::*;
+use std::sync::OnceLock;
 use wiremock::{
     Mock, MockServer, ResponseTemplate,
     matchers::{method, path},
 };
 
-fn runtime() -> tokio::runtime::Runtime {
-    tokio::runtime::Builder::new_multi_thread()
-        .worker_threads(2)
-        .enable_all()
-        .build()
-        .unwrap()
+fn runtime() -> &'static tokio::runtime::Runtime {
+    static RUNTIME: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
+    RUNTIME.get_or_init(|| {
+        tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
+            .enable_all()
+            .build()
+            .expect("create E2E runtime")
+    })
 }
 
 fn daemon_or_skip() -> Option<Box<Daemon>> {
@@ -53,6 +57,7 @@ fn e2e_001_doctor_uses_uds() {
     uds_home(&daemon);
     command()
         .env("COMPOZY_HOME", daemon.home_path())
+        .arg("doctor")
         .assert()
         .success()
         .stdout(predicate::str::contains("transport   uds"));
@@ -254,6 +259,107 @@ fn e2e_014_sessions_json_has_page() {
 }
 
 #[test]
+fn e2e_015_tail_without_sessions_never_enters_alt_screen() {
+    let Some(daemon) = daemon_or_skip() else {
+        return;
+    };
+    command()
+        .args([
+            "tail",
+            "--daemon",
+            "tcp",
+            "--tcp-addr",
+            &daemon.tcp_addr().to_string(),
+            "--workspace",
+            daemon.workspace_id(),
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("no batuta session in workspace"))
+        .stdout(predicate::str::contains("\u{1b}[?1049h").not());
+}
+
+#[test]
+fn e2e_016_missing_explicit_session_is_named() {
+    let Some(daemon) = daemon_or_skip() else {
+        return;
+    };
+    command()
+        .args([
+            "tail",
+            "--session",
+            "sess-0000000000000000",
+            "--daemon",
+            "tcp",
+            "--tcp-addr",
+            &daemon.tcp_addr().to_string(),
+            "--workspace",
+            daemon.workspace_id(),
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("session not found in workspace"));
+}
+
+#[test]
+fn e2e_017_short_session_id_is_usage_error_without_daemon() {
+    command()
+        .args(["tail", "--session", "807cee97"])
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("--session needs the full id"));
+}
+
+#[test]
+fn e2e_018_existing_session_refuses_non_tty_stdout() {
+    let Some(daemon) = daemon_or_skip() else {
+        return;
+    };
+    let id = runtime().block_on(daemon.create_session("batuta")).unwrap();
+    command()
+        .args([
+            "tail",
+            "--session",
+            &id,
+            "--daemon",
+            "tcp",
+            "--tcp-addr",
+            &daemon.tcp_addr().to_string(),
+            "--workspace",
+            daemon.workspace_id(),
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("tail needs a terminal"));
+}
+
+#[test]
+fn e2e_019_fallback_tail_selection_is_get_only() {
+    let Some(daemon) = daemon_or_skip() else {
+        return;
+    };
+    let id = runtime().block_on(daemon.create_session("batuta")).unwrap();
+    daemon.request_log().clear();
+    command()
+        .args([
+            "tail",
+            "--session",
+            &id,
+            "--daemon",
+            "tcp",
+            "--tcp-addr",
+            &daemon.tcp_addr().to_string(),
+            "--workspace",
+            daemon.workspace_id(),
+        ])
+        .assert()
+        .failure();
+    let requests = daemon.request_log().entries();
+    assert!(!requests.is_empty());
+    assert!(requests.iter().all(|(method, _)| method == "GET"));
+}
+
+#[test]
 fn ut_111_file_logging_is_opt_in() {
     let temp = tempfile::tempdir().unwrap();
     let enabled = temp.path().join("enabled.log");
@@ -262,8 +368,7 @@ fn ut_111_file_logging_is_opt_in() {
         .env("BATUTA_LOG_FILE", &enabled)
         .arg("tail")
         .assert()
-        .failure()
-        .stderr(predicate::str::contains("tail is not available yet"));
+        .failure();
     assert!(
         std::fs::read_to_string(&enabled)
             .unwrap()

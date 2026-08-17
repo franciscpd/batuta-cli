@@ -22,10 +22,6 @@ impl AppError {
         }
     }
 
-    pub fn unavailable(message: impl Into<String>) -> Self {
-        Self::daemon(message)
-    }
-
     pub fn reported(code: i32) -> Self {
         Self {
             message: String::new(),
