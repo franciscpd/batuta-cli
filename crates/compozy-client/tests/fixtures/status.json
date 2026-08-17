@@ -1,0 +1,12 @@
+{
+  "schema_version": "2026-07-16",
+  "generated_at": "2026-08-17T20:16:38.295160407Z",
+  "daemon": {
+    "status": "running",
+    "version": "v0.3.0-beta.16-9-ga35eda6d",
+    "socket": "[redacted]",
+    "http_host": "localhost",
+    "http_port": 2123,
+    "started_at": "2026-08-16T11:16:13Z"
+  }
+}

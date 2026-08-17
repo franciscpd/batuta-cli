@@ -1,0 +1,25 @@
+{
+  "sessions": [
+    {
+      "id": "sess-807cee9774b33f68",
+      "name": "Analisar e implementar projeto conforme documentação existente",
+      "agent_name": "batuta",
+      "workspace_id": "ws_e619d7250e618324",
+      "type": "user",
+      "state": "active",
+      "badge": "idle",
+      "transcript_epoch": null,
+      "activity": null,
+      "stop_reason": null,
+      "stop_detail": null,
+      "archived_at": null,
+      "created_at": "2026-08-17T16:25:13.962379312Z",
+      "updated_at": "2026-08-17T20:06:15.40280939Z"
+    }
+  ],
+  "page": {
+    "has_more": false,
+    "total": 1,
+    "limit": 5
+  }
+}

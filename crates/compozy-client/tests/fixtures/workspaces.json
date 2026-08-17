@@ -1,0 +1,31 @@
+{
+  "workspaces": [
+    {
+      "id": "ws_5a143c513f009400",
+      "name": "Viumo",
+      "root_dir": "[redacted]",
+      "add_dirs": [],
+      "default_agent": "batuta",
+      "created_at": "2026-08-17T18:35:34.496859606Z",
+      "updated_at": "2026-08-17T18:35:34.496859606Z"
+    },
+    {
+      "id": "ws_e619d7250e618324",
+      "name": "batuta-cli",
+      "root_dir": "[redacted]",
+      "add_dirs": [],
+      "default_agent": "batuta",
+      "created_at": "2026-08-17T16:24:12.876612624Z",
+      "updated_at": "2026-08-17T16:24:12.876612624Z"
+    },
+    {
+      "id": "ws_e75252783cad11f8",
+      "name": "franciscpd",
+      "root_dir": "[redacted]",
+      "add_dirs": [],
+      "default_agent": null,
+      "created_at": "2026-08-15T10:19:33.46812426Z",
+      "updated_at": "2026-08-15T10:19:33.46812426Z"
+    }
+  ]
+}
