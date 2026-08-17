@@ -49,17 +49,15 @@ pub async fn run(
     let session = match client.session(&workspace.id, &selected_id).await {
         Ok(session) => session,
         Err(Error::Daemon { status: 404, .. }) => {
-            return Err(AppError::daemon(format!(
-                "session not found in workspace {}: {selected_id}",
-                workspace.name
+            return Err(AppError::daemon(session_not_found_error(
+                &workspace.name,
+                &selected_id,
             )));
         }
         Err(error) => return Err(error.into()),
     };
     if !std::io::stdout().is_terminal() {
-        return Err(AppError::daemon(
-            "tail needs a terminal; use `batuta sessions --json` for scripting",
-        ));
+        return Err(AppError::daemon(tty_required_error()));
     }
     run_terminal(client, workspace, session, warning).await
 }
@@ -126,6 +124,14 @@ fn no_session_error(workspace: &str) -> String {
     )
 }
 
+fn session_not_found_error(workspace: &str, session_id: &str) -> String {
+    format!("session not found in workspace {workspace}: {session_id}")
+}
+
+fn tty_required_error() -> &'static str {
+    "tail needs a terminal; use `batuta sessions --json` for scripting"
+}
+
 fn validate_session_id(id: &str) -> Result<(), AppError> {
     let suffix = id
         .strip_prefix("sess-")
@@ -183,9 +189,24 @@ mod tests {
         assert!(error.contains("batuta sessions --all-agents"));
     }
     #[test]
+    fn ut_103_session_not_found_has_exact_error() {
+        let error = session_not_found_error("batuta-cli", "sess-0000000000000000");
+        assert_eq!(
+            error,
+            "session not found in workspace batuta-cli: sess-0000000000000000"
+        );
+    }
+    #[test]
     fn ut_104_full_session_id_validation() {
         assert!(validate_session_id("sess-0000000000000000").is_ok());
         assert!(validate_session_id("sess_6574c31447dcf803f5b435334c483b02").is_ok());
         assert_eq!(validate_session_id("807cee97").unwrap_err().exit_code(), 2);
+    }
+    #[test]
+    fn ut_105_non_tty_refusal_has_exact_message() {
+        assert_eq!(
+            tty_required_error(),
+            "tail needs a terminal; use `batuta sessions --json` for scripting"
+        );
     }
 }
