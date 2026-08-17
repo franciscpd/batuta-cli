@@ -191,7 +191,7 @@ shadow lists; a stream either signals "refetch" or delivers fenced deltas.
 | Panel | Initial read | Live | Update rule |
 |---|---|---|---|
 | Sessions | `GET /api/sessions?workspace_id&type=user&sort=last_activity` | SSE `/api/sessions/catalog-stream` | each wake refetches the page of the workspace named in the event |
-| Deliver runs | `GET /api/workspaces/{ws}/loop-runs?loop=batuta-deliver` | poll every 5 s while a non-terminal run is listed; otherwise on focus or manual refresh | terminal state stops the poll |
+| Deliver runs | `GET /api/workspaces/{ws}/loop-runs` (filter by loop name server-side if the route supports it, otherwise client-side) | poll every 5 s while a non-terminal run is listed; otherwise on focus or manual refresh | terminal state stops the poll |
 | Attention | `GET /api/observe/overview?workspace=` (`attention`) + `GET .../sessions/{id}/clarifications` for visible sessions | catalog-stream wakes; transcript deltas carrying `data-compozy-permission` | any verb executed triggers an overview refetch |
 | Detail: session | `GET .../sessions/{id}/transcript` (newest page; scroll up uses `before_sequence` while `has_older`) | SSE `.../sessions/{id}/stream?frames=transcript&epoch&generation&after_sequence` | `transcript_snapshot` with `reset:true` replaces state; `transcript_delta` applies by `start_sequence`/`sequence`; `session_stopped` closes the stream |
 | Detail: run | `GET .../loop-runs/{id}` (+ `/turns` on demand) | SSE `.../loop-runs/{id}/events` with `Last-Event-ID` | append to the timeline; a terminal outcome closes the stream |
