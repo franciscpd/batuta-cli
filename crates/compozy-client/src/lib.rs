@@ -10,6 +10,7 @@ mod workspaces;
 
 pub use error::Error;
 pub use sessions::SessionQuery;
+pub use sse::{ReconnectPolicy, ResetReason, StreamCursor, TranscriptEvent};
 pub use transcript::TranscriptQuery;
 pub use transport::{Outcome, ProbeReport, TargetOutcome, Transport, TransportOrder};
 
@@ -35,7 +36,7 @@ pub(crate) enum HttpClient {
 pub struct Client {
     pub(crate) transport: Transport,
     pub(crate) control: HttpClient,
-    pub(crate) _sse: HttpClient,
+    pub(crate) sse: HttpClient,
     pub(crate) base_uri: String,
     pub(crate) request_timeout: Duration,
 }
@@ -48,7 +49,7 @@ impl Client {
         Self {
             transport: Transport::Uds(path),
             control: HttpClient::Uds(control),
-            _sse: HttpClient::Uds(sse),
+            sse: HttpClient::Uds(sse),
             base_uri: "http://localhost".to_owned(),
             request_timeout: REQUEST_TIMEOUT,
         }
@@ -65,7 +66,7 @@ impl Client {
             control: HttpClient::Tcp(
                 HyperClient::builder(TokioExecutor::new()).build(control_connector),
             ),
-            _sse: HttpClient::Tcp(HyperClient::builder(TokioExecutor::new()).build(sse_connector)),
+            sse: HttpClient::Tcp(HyperClient::builder(TokioExecutor::new()).build(sse_connector)),
             base_uri: format!("http://{addr}"),
             request_timeout: REQUEST_TIMEOUT,
         }
