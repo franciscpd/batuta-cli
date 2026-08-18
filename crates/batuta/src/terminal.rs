@@ -1,4 +1,5 @@
 use std::cell::Cell;
+use std::sync::Arc;
 
 pub trait TerminalOps {
     fn enter(&self) -> std::io::Result<()>;
@@ -44,6 +45,18 @@ impl<O: TerminalOps> Drop for TerminalGuard<O> {
     }
 }
 
+pub fn install_panic_hook() {
+    install_panic_hook_with(Arc::new(ratatui::restore));
+}
+
+fn install_panic_hook_with(restore: Arc<dyn Fn() + Send + Sync>) {
+    let previous = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        restore();
+        previous(info);
+    }));
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -82,5 +95,16 @@ mod tests {
         let guard = TerminalGuard::enter(FakeOps(drops.clone())).unwrap();
         guard.restore_now();
         assert_eq!(drops.load(Ordering::SeqCst), 3);
+    }
+
+    #[test]
+    fn ut_453_panic_hook_restores_before_panic_output() {
+        let restores = Arc::new(AtomicUsize::new(0));
+        let copy = restores.clone();
+        install_panic_hook_with(Arc::new(move || {
+            copy.fetch_add(1, Ordering::SeqCst);
+        }));
+        assert!(std::panic::catch_unwind(|| panic!("test panic hook")).is_err());
+        assert_eq!(restores.load(Ordering::SeqCst), 1);
     }
 }

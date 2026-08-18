@@ -54,6 +54,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      - name: Install boundary-check tools
+        run: sudo apt-get update && sudo apt-get install -y ripgrep jq
       - run: scripts/check-boundaries.sh
 
   contract:
@@ -63,10 +65,4 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - name: Run contract tests when their task is present
-        run: |
-          if [[ -f crates/compozy-client/tests/contract.rs ]]; then
-            cargo test -p compozy-client --test contract
-          else
-            echo 'contract tests are delivered in task_05'
-          fi
+      - run: cargo test -p compozy-client --test contract

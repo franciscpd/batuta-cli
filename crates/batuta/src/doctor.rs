@@ -1,4 +1,4 @@
-use crate::{cli::Cli, exit::AppError, probe, version, workspace};
+use crate::{cli::Cli, config::Settings, exit::AppError, probe, version, workspace};
 use compozy_client::{
     Outcome, ProbeReport, TargetOutcome, Transport,
     types::{StatusPayload, Workspace},
@@ -11,6 +11,13 @@ pub struct Report {
     pub status: Option<StatusPayload>,
     pub workspace: Option<Workspace>,
     pub warnings: Vec<String>,
+    pub config: Option<ConfigReport>,
+}
+
+#[derive(Clone, Debug)]
+pub struct ConfigReport {
+    pub path: String,
+    pub loaded: bool,
 }
 
 impl Report {
@@ -19,7 +26,7 @@ impl Report {
     }
 }
 
-pub async fn run(cli: &Cli) -> Result<(), AppError> {
+pub async fn run(cli: &Cli, settings: &Settings) -> Result<(), AppError> {
     let (probe, client) = probe(cli).await;
     let Some(client) = client else {
         if let Some(message) = unexpected_probe_error(&probe) {
@@ -30,6 +37,7 @@ pub async fn run(cli: &Cli) -> Result<(), AppError> {
             status: None,
             workspace: None,
             warnings: vec!["daemon unreachable".into()],
+            config: Some(config_report(settings)),
         };
         if cli.json {
             print!("{}", render_json(&report));
@@ -39,10 +47,11 @@ pub async fn run(cli: &Cli) -> Result<(), AppError> {
         return Err(AppError::reported(1));
     };
     let status = client.status().await?;
-    let warnings = version::check(status.daemon.version.as_deref())
+    let mut warnings = version::check(status.daemon.version.as_deref())
         .into_iter()
         .collect::<Vec<_>>();
-    let explicit = cli.workspace.as_deref();
+    warnings.extend(settings.warnings.clone());
+    let explicit = settings.workspace.as_deref();
     let workspace = match workspace::resolve_from_daemon(&client, explicit).await {
         Ok(workspace) => Some(workspace),
         Err(error)
@@ -57,6 +66,7 @@ pub async fn run(cli: &Cli) -> Result<(), AppError> {
         status: Some(status),
         workspace,
         warnings,
+        config: Some(config_report(settings)),
     };
     if cli.json {
         print!("{}", render_json(&report));
@@ -103,6 +113,14 @@ pub fn render_human(report: &Report) -> String {
     }
     if status.daemon.status == "draining" {
         output.push_str("note: writes are refused while draining; reads work\n");
+    }
+    if let Some(config) = &report.config {
+        let state = if config.loaded {
+            "loaded"
+        } else {
+            "not found — defaults"
+        };
+        output.push_str(&format!("config      {}  ({state})\n", config.path));
     }
     output.push_str("ok\n");
     output
@@ -164,6 +182,8 @@ struct JsonReport<'a> {
     daemon: Option<JsonDaemon<'a>>,
     workspace: Option<JsonWorkspace<'a>>,
     warnings: &'a [String],
+    #[serde(skip_serializing_if = "Option::is_none")]
+    config: Option<JsonConfig<'a>>,
     batuta: Batuta,
 }
 #[derive(Serialize)]
@@ -191,6 +211,11 @@ struct Batuta {
     version: &'static str,
     min_compozy_version: &'static str,
 }
+#[derive(Serialize)]
+struct JsonConfig<'a> {
+    path: &'a str,
+    loaded: bool,
+}
 
 pub fn render_json(report: &Report) -> String {
     let targets = report
@@ -217,6 +242,10 @@ pub fn render_json(report: &Report) -> String {
         daemon,
         workspace,
         warnings: &report.warnings,
+        config: report.config.as_ref().map(|config| JsonConfig {
+            path: &config.path,
+            loaded: config.loaded,
+        }),
         batuta: Batuta {
             version: env!("CARGO_PKG_VERSION"),
             min_compozy_version: version::MIN_COMPOZY_VERSION,
@@ -224,6 +253,13 @@ pub fn render_json(report: &Report) -> String {
     })
     .expect("doctor JSON serializes")
         + "\n"
+}
+
+fn config_report(settings: &Settings) -> ConfigReport {
+    ConfigReport {
+        path: settings.config_path.display().to_string(),
+        loaded: settings.loaded,
+    }
 }
 
 fn json_target(target: &TargetOutcome) -> JsonTarget {
@@ -273,6 +309,7 @@ mod tests {
                 ..Default::default()
             }),
             warnings: vec![],
+            config: None,
         }
     }
     #[test]
@@ -308,5 +345,18 @@ mod tests {
             outcome: Outcome::Error("connection refused".into()),
         });
         assert!(render_human_error(&value).contains("tcp  127.0.0.1:9999: connection refused"));
+    }
+
+    #[test]
+    fn ut_636_reports_config_in_human_and_json_output() {
+        let mut value = report(Outcome::Ok);
+        value.config = Some(ConfigReport {
+            path: "/tmp/batuta/config.toml".into(),
+            loaded: true,
+        });
+        assert!(render_human(&value).contains("config      /tmp/batuta/config.toml  (loaded)"));
+        let json: serde_json::Value = serde_json::from_str(&render_json(&value)).unwrap();
+        assert_eq!(json["config"]["path"], "/tmp/batuta/config.toml");
+        assert_eq!(json["config"]["loaded"], true);
     }
 }
