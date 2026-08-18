@@ -77,7 +77,7 @@ pub const BINDINGS: &[Binding] = &[
     },
     Binding {
         context: Context::Attention,
-        keys: "a/A/x/X/r/Enter",
+        keys: "a/A/x/X/r/Enter/o",
         action: "respond/open",
     },
     Binding {

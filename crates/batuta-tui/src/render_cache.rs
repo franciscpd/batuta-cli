@@ -177,16 +177,56 @@ fn render_part(
                 .unwrap_or("?");
             let turn = data.get("turn_id").and_then(Value::as_str).unwrap_or("?");
             let summary = data
-                .get("summary")
-                .or_else(|| data.get("title"))
+                .get("title")
+                .or_else(|| data.get("action"))
                 .and_then(Value::as_str)
                 .unwrap_or("approval requested");
+            let input = data
+                .get("raw")
+                .and_then(|raw| raw.get("tool_input"))
+                .and_then(first_scalar)
+                .unwrap_or_default();
+            let always = data
+                .get("raw")
+                .and_then(|raw| raw.get("options"))
+                .and_then(Value::as_array)
+                .is_some_and(|options| {
+                    options.iter().any(|option| {
+                        matches!(
+                            option.get("decision").and_then(Value::as_str),
+                            Some("allow-always" | "reject-always")
+                        )
+                    })
+                });
             let decision = data
                 .get("decision")
                 .and_then(Value::as_str)
                 .map(|value| format!("  {value}"))
                 .unwrap_or_default();
-            lines.push(indented(format!("▪ approval  request_id {request}  turn {turn}  {summary}  read-only here{decision}"), theme.warning));
+            lines.push(indented(
+                format!("▪ approval  request {request}  turn {turn}{decision}"),
+                theme.warning,
+            ));
+            lines.push(indented(
+                format!(
+                    "  {summary}{}",
+                    if input.is_empty() {
+                        String::new()
+                    } else {
+                        format!(" · {input}")
+                    }
+                ),
+                theme.default,
+            ));
+            lines.push(indented(
+                if always {
+                    "  a allow once · A allow always · x reject once · X reject always"
+                } else {
+                    "  a allow once · x reject once"
+                }
+                .to_owned(),
+                theme.muted,
+            ));
             if expanded {
                 payload("request", data, theme.muted, lines);
             }

@@ -76,6 +76,19 @@ impl RuntimeClient for Client {
                     )
                     .await
                     .map(|value| ApiResponse::TranscriptPage(Box::new(value))),
+                Request::VisibleTranscript {
+                    workspace, session, ..
+                } => client
+                    .transcript(
+                        &workspace,
+                        &session,
+                        &TranscriptQuery {
+                            limit: 200,
+                            before_sequence: None,
+                        },
+                    )
+                    .await
+                    .map(|value| ApiResponse::TranscriptPage(Box::new(value))),
                 Request::Runs {
                     workspace,
                     loop_name,

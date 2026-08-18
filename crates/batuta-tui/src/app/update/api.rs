@@ -1,31 +1,121 @@
 use crate::{
-    app::model::{
-        AttentionItem, Detail, Model, PendingKind, RunRow, SessionDetail, SessionRow, StreamStatus,
-        WorkspaceRef, page_into_detail,
+    app::{
+        model::{
+            Detail, Model, Panel, PendingKind, SessionDetail, StreamStatus, WorkspaceRef,
+            page_into_detail,
+        },
+        panels::{attention, runs, sessions},
     },
-    cmd::{Cmd, Request, RequestId, StreamId},
+    cmd::{Cmd, Request, RequestId, StreamId, TimerId},
     msg::{ApiResponse, ApiResult},
 };
+use compozy_client::{TaskVerb, types::Decision};
+use std::time::Duration;
 
 pub(super) fn api(model: &mut Model, id: RequestId, result: ApiResult) -> Vec<Cmd> {
     let Some(PendingKind::Request(request)) = model.pending.remove(&id) else {
         return Vec::new();
     };
     match result {
-        Err(error) => {
-            if matches!(request, Request::Status { .. }) {
-                model.daemon.poll_ok = false;
-            } else {
-                model.set_sticky_toast(error);
-            }
-            model.dirty = true;
-            Vec::new()
-        }
+        Err(error) => failure(model, request, error),
         Ok(response) => {
             model.daemon.poll_ok = true;
             apply(model, request, response)
         }
     }
+}
+
+fn failure(model: &mut Model, request: Request, error: String) -> Vec<Cmd> {
+    model.dirty = true;
+    match &request {
+        Request::Status { .. } => {
+            model.daemon.poll_ok = false;
+            Vec::new()
+        }
+        Request::Runs { .. } => {
+            model.runs_stale = true;
+            model.set_sticky_toast(error);
+            runs::any_live(model)
+                .then(|| Cmd::After(Duration::from_secs(5), TimerId::RunsPoll))
+                .into_iter()
+                .collect()
+        }
+        Request::Overview { .. } if unavailable(&error) => {
+            model.attention_overview_unavailable = true;
+            attention::rebuild(model);
+            Vec::new()
+        }
+        Request::CreateSession { agent, .. } => {
+            model.create_session_pending = false;
+            let text = if unavailable(&error) {
+                "daemon is draining".into()
+            } else if error.contains("400") || error.to_lowercase().contains("agent") {
+                format!("agent {agent} not found in this workspace")
+            } else {
+                error
+            };
+            model.set_sticky_toast(text);
+            Vec::new()
+        }
+        Request::Prompt { .. } => {
+            model.prompt_pending = false;
+            model.set_sticky_toast(error);
+            Vec::new()
+        }
+        Request::Approve {
+            session, request, ..
+        } => {
+            if not_found(&error) {
+                if let Some(items) = model.attention_permissions.get_mut(session) {
+                    items.retain(|item| item.request_id != request.request_id);
+                }
+                attention::rebuild(model);
+            }
+            model.set_sticky_toast(if conflict(&error) {
+                "already decided".into()
+            } else {
+                error
+            });
+            attention::refresh(model)
+        }
+        Request::AnswerClarification { .. } => {
+            model.overlay = None;
+            model.set_sticky_toast(if not_found(&error) {
+                "clarification expired or already answered".into()
+            } else if unavailable(&error) {
+                "clarification service unavailable".into()
+            } else {
+                error
+            });
+            attention::refresh(model)
+        }
+        Request::TaskVerb { .. } => {
+            model.set_sticky_toast(error);
+            attention::refresh(model)
+        }
+        Request::Sessions { .. } => {
+            model.set_sticky_toast(error);
+            Vec::new()
+        }
+        _ => {
+            model.set_sticky_toast(error);
+            Vec::new()
+        }
+    }
+}
+
+fn unavailable(error: &str) -> bool {
+    error.contains("503")
+        || error.to_lowercase().contains("unavailable")
+        || error.to_lowercase().contains("draining")
+}
+
+fn conflict(error: &str) -> bool {
+    error.contains("409") || error.to_lowercase().contains("already")
+}
+
+fn not_found(error: &str) -> bool {
+    error.contains("404") || error.to_lowercase().contains("not found")
 }
 
 fn apply(model: &mut Model, request: Request, response: ApiResponse) -> Vec<Cmd> {
@@ -57,39 +147,35 @@ fn apply(model: &mut Model, request: Request, response: ApiResponse) -> Vec<Cmd>
             Vec::new()
         }
         (Request::Sessions { .. }, ApiResponse::Sessions(page)) => {
-            model
-                .sessions
-                .set_items(page.sessions.iter().map(SessionRow::from).collect());
+            sessions::apply(model, *page);
+            attention::rebuild(model);
             model.dirty = true;
-            Vec::new()
+            attention::refresh(model)
         }
         (Request::Runs { .. }, ApiResponse::Runs(page)) => {
-            model.runs.set_items(
-                page.runs
-                    .into_iter()
-                    .map(|run| RunRow {
-                        id: run.id,
-                        loop_name: run.loop_name,
-                        status: run.status,
-                        parent_id: run.parent_loop_run_id,
-                    })
-                    .collect(),
-            );
+            runs::apply(model, *page);
+            model.dirty = true;
+            runs::any_live(model)
+                .then(|| Cmd::After(Duration::from_secs(5), TimerId::RunsPoll))
+                .into_iter()
+                .collect()
+        }
+        (Request::Overview { .. }, ApiResponse::Overview(overview)) => {
+            model.attention_overview_total = overview.attention.total;
+            model.attention_overview = overview.attention.items;
+            model.attention_overview_unavailable = false;
+            attention::rebuild(model);
             model.dirty = true;
             Vec::new()
         }
-        (Request::Overview { .. }, ApiResponse::Overview(overview)) => {
-            model.attention = overview
-                .attention
-                .items
-                .into_iter()
-                .map(|item| AttentionItem {
-                    title: item.title,
-                    detail: item.detail,
-                    session_id: (!item.session_id.is_empty()).then_some(item.session_id),
-                    run_id: (!item.run_id.is_empty()).then_some(item.run_id),
-                })
-                .collect();
+        (Request::Clarifications { session, .. }, ApiResponse::Clarifications(items)) => {
+            model.attention_clarifications.insert(session, items);
+            attention::rebuild(model);
+            model.dirty = true;
+            Vec::new()
+        }
+        (Request::VisibleTranscript { session, .. }, ApiResponse::TranscriptPage(page)) => {
+            attention::apply_transcript(model, &session, &page);
             model.dirty = true;
             Vec::new()
         }
@@ -102,36 +188,37 @@ fn apply(model: &mut Model, request: Request, response: ApiResponse) -> Vec<Cmd>
             } else {
                 model.detail = Detail::Session(Box::new(SessionDetail::new(session)));
             }
-            model.focus = crate::app::model::Panel::Detail;
+            model.focus = Panel::Detail;
             model.dirty = true;
             Vec::new()
         }
         (Request::TranscriptPage { session, .. }, ApiResponse::TranscriptPage(page)) => {
-            if model.session_detail().is_some() {
-                let (cursor, stopped) = {
-                    let detail = model.session_detail_mut().expect("checked session detail");
-                    page_into_detail(detail, *page);
-                    (detail.transcript.cursor(), detail.view.stopped)
-                };
-                model.stream_cursors.insert(
-                    StreamId::Transcript(session.clone()),
-                    format!(
-                        "{}:{}:{}",
-                        cursor.epoch, cursor.generation, cursor.after_sequence
-                    ),
-                );
-                model
-                    .active_streams
-                    .insert(StreamId::Transcript(session.clone()));
-                model.dirty = true;
-                if stopped {
-                    model.active_streams.remove(&StreamId::Transcript(session));
-                    Vec::new()
-                } else {
-                    vec![Cmd::StartStream(StreamId::Transcript(session))]
-                }
-            } else {
+            attention::apply_transcript(model, &session, &page);
+            let Some(detail) = model
+                .session_detail_mut()
+                .filter(|detail| detail.session.id == session)
+            else {
+                return Vec::new();
+            };
+            page_into_detail(detail, *page);
+            let cursor = detail.transcript.cursor();
+            let stopped = detail.view.stopped;
+            model.stream_cursors.insert(
+                StreamId::Transcript(session.clone()),
+                format!(
+                    "{}:{}:{}",
+                    cursor.epoch, cursor.generation, cursor.after_sequence
+                ),
+            );
+            model
+                .active_streams
+                .insert(StreamId::Transcript(session.clone()));
+            model.dirty = true;
+            if stopped {
+                model.active_streams.remove(&StreamId::Transcript(session));
                 Vec::new()
+            } else {
+                vec![Cmd::StartStream(StreamId::Transcript(session))]
             }
         }
         (Request::Run { run, .. }, ApiResponse::Run(value)) => {
@@ -144,11 +231,92 @@ fn apply(model: &mut Model, request: Request, response: ApiResponse) -> Vec<Cmd>
             }
             Vec::new()
         }
-        (Request::Prompt { .. }, ApiResponse::Prompt(_)) => model.set_success_toast("sent"),
+        (Request::Prompt { session, .. }, ApiResponse::Prompt(_)) => {
+            model.prompt_pending = false;
+            model.app_created_sessions.remove(&session);
+            if let Some(detail) = model
+                .session_detail_mut()
+                .filter(|detail| detail.session.id == session)
+            {
+                detail.composer.text.clear();
+                detail.composer.cursor = 0;
+            }
+            model.set_success_toast("sent")
+        }
         (Request::CreateSession { .. }, ApiResponse::SessionCreated(session)) => {
-            model.detail = Detail::Session(Box::new(SessionDetail::new(session)));
-            model.set_success_toast("session created")
+            created_session(model, session)
+        }
+        (Request::Approve { request, .. }, ApiResponse::Empty) => {
+            let text = match request.decision {
+                Decision::AllowOnce | Decision::AllowAlways => "allowed",
+                Decision::RejectOnce | Decision::RejectAlways => "rejected",
+            };
+            let mut commands = model.set_success_toast(text);
+            commands.extend(attention::refresh(model));
+            commands
+        }
+        (Request::AnswerClarification { .. }, ApiResponse::ClarificationAnswered(_)) => {
+            model.overlay = None;
+            let mut commands = model.set_success_toast("answered");
+            commands.extend(attention::refresh(model));
+            commands
+        }
+        (Request::TaskVerb { verb, .. }, ApiResponse::Empty) => {
+            let text = match verb {
+                TaskVerb::Approve => "approved",
+                TaskVerb::Reject => "rejected",
+                TaskVerb::Retry => "retry requested",
+            };
+            let mut commands = model.set_success_toast(text);
+            commands.extend(attention::refresh(model));
+            commands
         }
         (_, _) => Vec::new(),
     }
+}
+
+fn created_session(model: &mut Model, session: compozy_client::types::Session) -> Vec<Cmd> {
+    let Some(workspace) = model.workspace.as_ref().map(|value| value.id.clone()) else {
+        return Vec::new();
+    };
+    model.create_session_pending = false;
+    model.app_created_sessions.insert(session.id.clone());
+    if !model
+        .sessions_unfiltered
+        .iter()
+        .any(|row| row.id == session.id)
+    {
+        model.sessions_unfiltered.insert(0, (&session).into());
+    }
+    let new_id = session.id.clone();
+    sessions::refilter(model, Some(&new_id));
+    model.sessions.selected = model.sessions.items.iter().position(|row| row.id == new_id);
+    let mut detail = SessionDetail::new(session);
+    detail.composer.focused = true;
+    model.detail = Detail::Session(Box::new(detail));
+    model.focus = Panel::Detail;
+    model
+        .active_streams
+        .insert(StreamId::Transcript(new_id.clone()));
+    let mut commands = model.set_success_toast("session created");
+    if let Some(command) = sessions::request(model) {
+        commands.push(command);
+    }
+    let transcript = model.allocate(|id| Request::TranscriptPage {
+        id,
+        workspace: workspace.clone(),
+        session: new_id.clone(),
+        before_sequence: None,
+    });
+    let clarifications = model.allocate(|id| Request::Clarifications {
+        id,
+        workspace,
+        session: new_id.clone(),
+    });
+    commands.extend([
+        Cmd::Get(transcript),
+        Cmd::Get(clarifications),
+        Cmd::StartStream(StreamId::Transcript(new_id)),
+    ]);
+    commands
 }

@@ -22,10 +22,10 @@ pub fn render(model: &Model, frame: &mut Frame<'_>) {
         return;
     };
     let (title, text, scroll) = match overlay {
-        Overlay::Help { scroll } => ("help", keymap::help_lines().join("\n"), *scroll),
-        Overlay::Logs { .. } => ("logs", "no logs".to_owned(), 0),
+        Overlay::Help { scroll } => ("help".to_owned(), keymap::help_lines().join("\n"), *scroll),
+        Overlay::Logs { .. } => ("logs".to_owned(), "no logs".to_owned(), 0),
         Overlay::WorkspacePicker { items, .. } => (
-            "workspaces",
+            "workspaces".to_owned(),
             items
                 .iter()
                 .map(|item| format!("{}  {}", item.name, item.root_dir))
@@ -33,28 +33,10 @@ pub fn render(model: &Model, frame: &mut Frame<'_>) {
                 .join("\n"),
             0,
         ),
-        Overlay::Clarify {
-            question,
-            choices,
-            text,
-            ..
-        } => (
-            "clarify",
-            if choices.is_empty() {
-                format!("{question}\nanswer: {text}")
-            } else {
-                format!(
-                    "{question}\n{}",
-                    choices
-                        .iter()
-                        .enumerate()
-                        .map(|(index, value)| format!("{}  {value}", index + 1))
-                        .collect::<Vec<_>>()
-                        .join("\n")
-                )
-            },
-            0,
-        ),
+        Overlay::Clarify { .. } => {
+            let (title, text) = super::clarify::content(overlay).expect("clarification overlay");
+            (title, text, 0)
+        }
     };
     let area = centered(frame.area(), 70, frame.area().height.saturating_sub(4));
     frame.render_widget(Clear, area);

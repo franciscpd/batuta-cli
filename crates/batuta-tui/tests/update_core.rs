@@ -102,12 +102,14 @@ fn ut_411_and_ut_412_selection_opens_and_follows() {
             agent: "batuta".into(),
             name: None,
             state: "active".into(),
+            ..SessionRow::default()
         },
         SessionRow {
             id: "sess-b".into(),
             agent: "batuta".into(),
             name: None,
             state: "active".into(),
+            ..SessionRow::default()
         },
     ]);
     update(&mut model, press(KeyCode::Char('j')));

@@ -72,6 +72,11 @@ pub enum Request {
         session: String,
         before_sequence: Option<i64>,
     },
+    VisibleTranscript {
+        id: RequestId,
+        workspace: String,
+        session: String,
+    },
     Runs {
         id: RequestId,
         workspace: String,
@@ -157,6 +162,7 @@ impl Request {
             | Self::Sessions { id, .. }
             | Self::Session { id, .. }
             | Self::TranscriptPage { id, .. }
+            | Self::VisibleTranscript { id, .. }
             | Self::Runs { id, .. }
             | Self::Run { id, .. }
             | Self::Overview { id, .. }

@@ -22,8 +22,11 @@ pub fn contexts(model: &Model) -> Vec<Context> {
     }
 }
 pub fn render(model: &Model, frame: &mut Frame<'_>, area: Rect) {
-    frame.render_widget(
-        Paragraph::new(keymap::footer(&contexts(model))).style(model.theme.muted),
-        area,
-    );
+    let text = if model.focus == Panel::Attention {
+        crate::app::panels::attention::allowed_verbs(model)
+            .unwrap_or_else(|| keymap::footer(&contexts(model)))
+    } else {
+        keymap::footer(&contexts(model))
+    };
+    frame.render_widget(Paragraph::new(text).style(model.theme.muted), area);
 }

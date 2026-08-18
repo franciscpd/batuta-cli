@@ -4,7 +4,7 @@ use crate::{
     msg::AnyStreamEvent,
     transcript::Applied,
 };
-use compozy_client::{StreamEvent, TranscriptEvent, types::TranscriptSnapshot};
+use compozy_client::{Error, StreamEvent, TranscriptEvent, types::TranscriptSnapshot};
 
 pub(super) fn stream(model: &mut Model, id: StreamId, event: AnyStreamEvent) -> Vec<Cmd> {
     if !model.active_streams.contains(&id) {
@@ -17,6 +17,15 @@ pub(super) fn stream(model: &mut Model, id: StreamId, event: AnyStreamEvent) -> 
     }
     let commands = match (id.clone(), event) {
         (StreamId::Transcript(session), AnyStreamEvent::Transcript(event)) => {
+            let permission_delta = match &event {
+                TranscriptEvent::Delta(delta) => delta.entries.iter().any(|entry| {
+                    crate::app::panels::attention::permission_from_delta(&entry.message.parts)
+                }),
+                TranscriptEvent::Snapshot(snapshot) => snapshot.entries.iter().any(|entry| {
+                    crate::app::panels::attention::permission_from_delta(&entry.message.parts)
+                }),
+                _ => false,
+            };
             let commands = transcript(model, &session, event);
             if let Some(detail) = model.session_detail() {
                 let cursor = detail.transcript.cursor();
@@ -28,12 +37,42 @@ pub(super) fn stream(model: &mut Model, id: StreamId, event: AnyStreamEvent) -> 
                     ),
                 );
             }
-            commands
+            if permission_delta {
+                crate::app::panels::attention::sync_open_detail(model);
+                crate::app::panels::attention::rebuild(model);
+                let mut all = commands;
+                all.extend(super::attention::refresh(model));
+                all
+            } else {
+                commands
+            }
         }
-        (StreamId::Catalog, AnyStreamEvent::Catalog(StreamEvent::Event(_))) => vec![Cmd::After(
-            std::time::Duration::from_millis(300),
-            crate::cmd::TimerId::CatalogDebounce,
-        )],
+        (StreamId::Catalog, AnyStreamEvent::Catalog(StreamEvent::Event(event))) => {
+            let active = model.workspace.as_ref().map(|value| value.id.as_str());
+            if active != Some(event.workspace_id.as_str()) || model.catalog_debounce_armed {
+                Vec::new()
+            } else {
+                model.catalog_debounce_armed = true;
+                vec![Cmd::After(
+                    std::time::Duration::from_millis(300),
+                    crate::cmd::TimerId::CatalogDebounce,
+                )]
+            }
+        }
+        (
+            StreamId::Catalog,
+            AnyStreamEvent::Catalog(StreamEvent::Fatal(Error::Daemon { status: 503, .. })),
+        ) => {
+            model.catalog_polling = true;
+            vec![Cmd::After(
+                std::time::Duration::from_secs(10),
+                crate::cmd::TimerId::CatalogPoll,
+            )]
+        }
+        (StreamId::Catalog, AnyStreamEvent::Catalog(StreamEvent::Reconnected)) => {
+            model.catalog_polling = false;
+            Vec::new()
+        }
         (StreamId::RunEvents(run), AnyStreamEvent::Run(StreamEvent::Event(event))) => {
             let seq = event.seq;
             if let crate::app::model::Detail::Run(detail) = &mut model.detail

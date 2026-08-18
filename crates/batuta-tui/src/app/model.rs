@@ -3,11 +3,14 @@ use crate::{
     theme::Theme,
     transcript::TranscriptState,
 };
-use compozy_client::types::{Entry, LoopEvent, LoopRunDetail, Session, TranscriptPage};
+use compozy_client::types::{
+    ApproveRequest, Clarification, Decision, Entry, LoopEvent, LoopRunAggregates, LoopRunDetail,
+    PermissionData, Session, Timestamp, TranscriptPage,
+};
 use ratatui::text::Text;
 use std::{
     collections::{BTreeMap, BTreeSet, HashMap, HashSet},
-    time::Duration,
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -144,6 +147,8 @@ pub struct SessionRow {
     pub agent: String,
     pub name: Option<String>,
     pub state: String,
+    pub badge: Option<String>,
+    pub last_activity_at: Option<Timestamp>,
 }
 impl From<&Session> for SessionRow {
     fn from(value: &Session) -> Self {
@@ -152,6 +157,12 @@ impl From<&Session> for SessionRow {
             agent: value.agent_name.clone(),
             name: value.name.clone(),
             state: value.state.clone(),
+            badge: value.badge.clone(),
+            last_activity_at: value
+                .activity
+                .as_ref()
+                .and_then(|activity| activity.last_activity_at.clone())
+                .or_else(|| value.updated_at.clone()),
         }
     }
 }
@@ -162,14 +173,40 @@ pub struct RunRow {
     pub loop_name: String,
     pub status: String,
     pub parent_id: String,
+    pub last_progress_at: Option<Timestamp>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum AttentionSource {
+    Permission {
+        session_id: String,
+        request_id: String,
+        turn_id: String,
+        allow_always: bool,
+    },
+    Clarification {
+        session_id: String,
+        request_id: String,
+        choices: Vec<String>,
+        deadline: Option<Timestamp>,
+    },
+    Overview {
+        kind: String,
+        task_id: String,
+        run_id: Option<String>,
+        session_id: Option<String>,
+        actions: Vec<String>,
+    },
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct AttentionItem {
+    pub source: Option<AttentionSource>,
     pub title: String,
     pub detail: String,
     pub session_id: Option<String>,
     pub run_id: Option<String>,
+    pub at: Option<Timestamp>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -321,11 +358,15 @@ pub enum Overlay {
         at_start: bool,
     },
     Clarify {
+        session_id: String,
+        request_id: String,
         question: String,
+        deadline: Option<Timestamp>,
         text: String,
         choices: Vec<String>,
         selected: usize,
         text_focused: bool,
+        hint: Option<String>,
     },
 }
 
@@ -363,11 +404,32 @@ pub struct Model {
     pub sessions: ListState<SessionRow>,
     pub runs: ListState<RunRow>,
     pub attention: Vec<AttentionItem>,
+    pub attention_selected: Option<usize>,
+    pub attention_permissions: HashMap<String, Vec<PermissionData>>,
+    pub attention_clarifications: HashMap<String, Vec<Clarification>>,
+    pub attention_overview: Vec<compozy_client::types::AttentionItem>,
+    pub attention_overview_total: u64,
+    pub attention_overview_unavailable: bool,
+    pub attention_confirm: Option<(usize, Decision)>,
+    pub inline_permission_confirm: Option<(String, ApproveRequest)>,
+    pub sessions_unfiltered: Vec<SessionRow>,
+    pub sessions_all_agents: bool,
+    pub sessions_has_more: bool,
+    pub catalog_polling: bool,
+    pub catalog_debounce_armed: bool,
+    pub create_session_pending: bool,
+    pub prompt_pending: bool,
+    pub app_created_sessions: HashSet<String>,
+    pub runs_unfiltered: Vec<RunRow>,
+    pub runs_all_loops: bool,
+    pub runs_aggregates: Option<LoopRunAggregates>,
+    pub runs_stale: bool,
     pub detail: Detail,
     pub overlay: Option<Overlay>,
     pub toast: Option<Toast>,
     pub daemon: DaemonStatus,
     pub size: (u16, u16),
+    pub now_unix: i64,
     pub dirty: bool,
     pub pending: BTreeMap<RequestId, PendingKind>,
     pub active_streams: HashSet<StreamId>,
@@ -377,6 +439,7 @@ pub struct Model {
     pub quit_guard: bool,
     pub last_list_focus: Panel,
     next_request: u64,
+    next_message: u64,
 }
 
 impl Model {
@@ -395,6 +458,26 @@ impl Model {
             sessions: ListState::default(),
             runs: ListState::default(),
             attention: Vec::new(),
+            attention_selected: None,
+            attention_permissions: HashMap::new(),
+            attention_clarifications: HashMap::new(),
+            attention_overview: Vec::new(),
+            attention_overview_total: 0,
+            attention_overview_unavailable: false,
+            attention_confirm: None,
+            inline_permission_confirm: None,
+            sessions_unfiltered: Vec::new(),
+            sessions_all_agents: false,
+            sessions_has_more: false,
+            catalog_polling: false,
+            catalog_debounce_armed: false,
+            create_session_pending: false,
+            prompt_pending: false,
+            app_created_sessions: HashSet::new(),
+            runs_unfiltered: Vec::new(),
+            runs_all_loops: false,
+            runs_aggregates: None,
+            runs_stale: false,
             detail: Detail::Empty,
             overlay: None,
             toast: None,
@@ -404,6 +487,9 @@ impl Model {
                 poll_ok: true,
             },
             size: (100, 30),
+            now_unix: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map_or(0, |value| value.as_secs() as i64),
             dirty: true,
             pending: BTreeMap::new(),
             active_streams: HashSet::new(),
@@ -413,6 +499,7 @@ impl Model {
             quit_guard: false,
             last_list_focus: Panel::Sessions,
             next_request: 1,
+            next_message: 1,
         }
     }
     pub fn tail(header: SessionHeader) -> Self {
@@ -446,6 +533,11 @@ impl Model {
         self.pending
             .insert(id, PendingKind::Request(request.clone()));
         request
+    }
+    pub fn message_ids(&mut self) -> (String, String) {
+        let value = self.next_message;
+        self.next_message += 1;
+        (format!("msg_{value:016x}"), format!("idem_{value:016x}"))
     }
     pub fn initial_cmds(&mut self) -> Vec<Cmd> {
         if self.mode == AppMode::TailOnly {

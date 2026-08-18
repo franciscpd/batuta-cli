@@ -110,6 +110,9 @@ fn focus_changed(model: &mut Model) -> Vec<Cmd> {
 }
 
 fn list_key(model: &mut Model, key: KeyEvent) -> Vec<Cmd> {
+    if model.focus == Panel::Attention {
+        return super::attention::key(model, key);
+    }
     let movement = matches!(
         key.code,
         KeyCode::Char('j' | 'k' | 'g' | 'G')
@@ -127,6 +130,9 @@ fn list_key(model: &mut Model, key: KeyEvent) -> Vec<Cmd> {
                 model.sessions.select_previous()
             }
             KeyCode::Char('/') => model.sessions.filter_focused = true,
+            KeyCode::Char('*') => return super::sessions::toggle_agent(model),
+            KeyCode::Char('r') => return super::sessions::refresh(model),
+            KeyCode::Char('n') => return super::sessions::create(model),
             KeyCode::Enter => return open_session(model),
             _ => return Vec::new(),
         },
@@ -138,6 +144,8 @@ fn list_key(model: &mut Model, key: KeyEvent) -> Vec<Cmd> {
                 model.runs.select_previous()
             }
             KeyCode::Char('/') => model.runs.filter_focused = true,
+            KeyCode::Char('*') => return super::runs::toggle_loop(model),
+            KeyCode::Char('r') => return super::runs::refresh(model),
             KeyCode::Enter => return open_run(model),
             _ => return Vec::new(),
         },
@@ -159,19 +167,32 @@ pub(super) fn open_session(model: &mut Model) -> Vec<Cmd> {
     let Some(row) = model.sessions.selected().cloned() else {
         return Vec::new();
     };
+    open_session_id(model, row.id)
+}
+
+pub(super) fn open_session_id(model: &mut Model, id: String) -> Vec<Cmd> {
     let Some(workspace) = model.workspace.clone() else {
         return Vec::new();
     };
+    let row = model
+        .sessions
+        .items
+        .iter()
+        .find(|row| row.id == id)
+        .cloned();
     let old = match &model.detail {
         Detail::Session(detail) => Some(detail.session.id.clone()),
         _ => None,
     };
-    let id = row.id.clone();
     let session = compozy_client::types::Session {
         id: id.clone(),
-        agent_name: row.agent,
-        name: row.name,
-        state: row.state,
+        agent_name: row
+            .as_ref()
+            .map_or_else(String::new, |row| row.agent.clone()),
+        name: row.as_ref().and_then(|row| row.name.clone()),
+        state: row
+            .as_ref()
+            .map_or_else(String::new, |row| row.state.clone()),
         ..Default::default()
     };
     model.detail = Detail::Session(Box::new(crate::app::model::SessionDetail::new(session)));
@@ -183,9 +204,14 @@ pub(super) fn open_session(model: &mut Model) -> Vec<Cmd> {
     });
     let page_request = model.allocate(|request_id| Request::TranscriptPage {
         id: request_id,
-        workspace: workspace.id,
+        workspace: workspace.id.clone(),
         session: id.clone(),
         before_sequence: None,
+    });
+    let clarification_request = model.allocate(|request_id| Request::Clarifications {
+        id: request_id,
+        workspace: workspace.id.clone(),
+        session: id.clone(),
     });
     let mut commands = Vec::new();
     if let Some(old) = old.filter(|old| old != &id) {
@@ -201,6 +227,7 @@ pub(super) fn open_session(model: &mut Model) -> Vec<Cmd> {
         Cmd::Get(detail_request),
         Cmd::Get(page_request),
         Cmd::StartStream(StreamId::Transcript(id)),
+        Cmd::Get(clarification_request),
     ]);
     model.dirty = true;
     commands
@@ -209,10 +236,13 @@ pub(super) fn open_run(model: &mut Model) -> Vec<Cmd> {
     let Some(row) = model.runs.selected().cloned() else {
         return Vec::new();
     };
+    open_run_id(model, row.id)
+}
+
+pub(super) fn open_run_id(model: &mut Model, id: String) -> Vec<Cmd> {
     let Some(workspace) = model.workspace.clone() else {
         return Vec::new();
     };
-    let id = row.id.clone();
     model.detail = Detail::Run(Box::new(crate::app::model::RunDetail {
         run: None,
         run_id: id.clone(),
@@ -232,6 +262,9 @@ pub(super) fn open_run(model: &mut Model) -> Vec<Cmd> {
 }
 
 fn detail_key(model: &mut Model, key: KeyEvent) -> Vec<Cmd> {
+    if let Some(commands) = super::attention::inline_key(model, key) {
+        return commands;
+    }
     if matches!(key.code, KeyCode::Char('k') | KeyCode::Up) {
         return move_up(model, 1);
     }
@@ -320,25 +353,12 @@ fn move_up(model: &mut Model, amount: usize) -> Vec<Cmd> {
 }
 
 fn text_key(model: &mut Model, key: KeyEvent) -> Vec<Cmd> {
-    if let Some(Overlay::Clarify {
-        text,
-        text_focused: true,
-        ..
-    }) = &mut model.overlay
-    {
-        match key.code {
-            KeyCode::Esc => model.overlay = None,
-            KeyCode::Char(c) => text.push(c),
-            KeyCode::Backspace => {
-                text.pop();
-            }
-            _ => {}
-        }
-        model.dirty = true;
-        return Vec::new();
+    if matches!(model.overlay, Some(Overlay::Clarify { .. })) {
+        return super::clarify::key(model, key);
     }
     if model.sessions.filter_focused || model.runs.filter_focused {
-        let (filter, focused) = if model.sessions.filter_focused {
+        let filtering_sessions = model.sessions.filter_focused;
+        let (filter, focused) = if filtering_sessions {
             (
                 &mut model.sessions.filter,
                 &mut model.sessions.filter_focused,
@@ -357,6 +377,12 @@ fn text_key(model: &mut Model, key: KeyEvent) -> Vec<Cmd> {
                 filter.pop();
             }
             _ => {}
+        }
+        if filtering_sessions {
+            crate::app::panels::sessions::refilter(model, None);
+            crate::app::panels::attention::rebuild(model);
+        } else {
+            crate::app::panels::runs::refilter(model, None);
         }
         model.dirty = true;
         return Vec::new();
@@ -382,7 +408,7 @@ fn text_key(model: &mut Model, key: KeyEvent) -> Vec<Cmd> {
         {
             detail.composer.insert('\n')
         }
-        KeyCode::Enter => {}
+        KeyCode::Enter => return super::sessions::send_prompt(model),
         _ => {}
     }
     model.dirty = true;
@@ -390,6 +416,9 @@ fn text_key(model: &mut Model, key: KeyEvent) -> Vec<Cmd> {
 }
 
 fn overlay_key(model: &mut Model, key: KeyEvent) -> Vec<Cmd> {
+    if matches!(model.overlay, Some(Overlay::Clarify { .. })) {
+        return super::clarify::key(model, key);
+    }
     match &mut model.overlay {
         Some(Overlay::Help { scroll }) => match key.code {
             KeyCode::Esc | KeyCode::Char('?') => model.overlay = None,
@@ -406,7 +435,7 @@ fn overlay_key(model: &mut Model, key: KeyEvent) -> Vec<Cmd> {
             }
             model.overlay = None
         }
-        Some(Overlay::Clarify { .. }) if key.code == KeyCode::Esc => model.overlay = None,
+        Some(Overlay::Clarify { .. }) => return Vec::new(),
         _ => return Vec::new(),
     }
     model.dirty = true;
@@ -414,6 +443,9 @@ fn overlay_key(model: &mut Model, key: KeyEvent) -> Vec<Cmd> {
 }
 
 fn chooser_or_confirm(model: &Model) -> bool {
+    if model.attention_confirm.is_some() || model.inline_permission_confirm.is_some() {
+        return true;
+    }
     match &model.detail {
         Detail::Session(detail) => detail.chooser.is_some() || detail.confirm.is_some(),
         Detail::Run(detail) => detail.confirm.is_some(),
@@ -421,6 +453,26 @@ fn chooser_or_confirm(model: &Model) -> bool {
     }
 }
 fn chooser_key(model: &mut Model, key: KeyEvent) -> Vec<Cmd> {
+    if model.attention_confirm.is_some() {
+        return match key.code {
+            KeyCode::Enter => super::attention::confirm(model),
+            KeyCode::Esc => {
+                super::attention::cancel_confirm(model);
+                Vec::new()
+            }
+            _ => Vec::new(),
+        };
+    }
+    if model.inline_permission_confirm.is_some() {
+        return match key.code {
+            KeyCode::Enter => super::attention::confirm_inline(model),
+            KeyCode::Esc => {
+                super::attention::cancel_confirm(model);
+                Vec::new()
+            }
+            _ => Vec::new(),
+        };
+    }
     if key.code == KeyCode::Esc {
         if let Some(detail) = model.session_detail_mut() {
             detail.chooser = None;

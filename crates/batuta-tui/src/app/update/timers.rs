@@ -46,18 +46,31 @@ pub(super) fn timer(model: &mut Model, id: TimerId) -> Vec<Cmd> {
             ]
         }
         TimerId::AttentionPoll => {
-            let Some(workspace) = model.workspace.clone() else {
-                return Vec::new();
-            };
-            let request = model.allocate(|request_id| Request::Overview {
-                id: request_id,
-                workspace: workspace.id,
-            });
-            vec![
-                Cmd::Get(request),
-                Cmd::After(std::time::Duration::from_secs(30), TimerId::AttentionPoll),
-            ]
+            let mut commands = super::attention::refresh(model);
+            commands.push(Cmd::After(
+                std::time::Duration::from_secs(30),
+                TimerId::AttentionPoll,
+            ));
+            commands
         }
-        TimerId::CatalogDebounce | TimerId::CatalogPoll | TimerId::RunsPoll => Vec::new(),
+        TimerId::CatalogDebounce => {
+            model.catalog_debounce_armed = false;
+            let mut commands = super::sessions::refresh(model);
+            commands.extend(super::attention::refresh(model));
+            commands
+        }
+        TimerId::CatalogPoll => {
+            if !model.catalog_polling {
+                return Vec::new();
+            }
+            let mut commands = super::sessions::refresh(model);
+            commands.extend(super::attention::refresh(model));
+            commands.push(Cmd::After(
+                std::time::Duration::from_secs(10),
+                TimerId::CatalogPoll,
+            ));
+            commands
+        }
+        TimerId::RunsPoll => super::runs::refresh(model),
     }
 }
