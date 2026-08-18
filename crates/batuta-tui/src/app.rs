@@ -321,10 +321,12 @@ fn apply_snapshot(model: &mut Model, snapshot: TranscriptSnapshot) -> Vec<Cmd> {
     if model.follow {
         model.selection = model.transcript.len().saturating_sub(1);
     } else {
-        let new_count = model.transcript.len().saturating_sub(old_len);
+        let new_len = model.transcript.len();
+        let new_count = new_len.saturating_sub(old_len);
         if new_count > 0 {
             model.footer = FooterState::NewBelow(new_count);
         }
+        model.selection = model.selection.min(new_len.saturating_sub(1));
     }
     model.dirty = true;
     if reset {

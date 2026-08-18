@@ -227,6 +227,34 @@ fn ut_155_scrolled_model_counts_new_entries_below() {
 }
 
 #[test]
+fn ut_162_shrinking_reset_clamps_scrolled_selection() {
+    let mut model = model();
+    update(
+        &mut model,
+        Msg::Page(Ok(page(
+            vec![entry(10, 10), entry(20, 20), entry(30, 30), entry(40, 40)],
+            false,
+        ))),
+    );
+    model.follow = false;
+    model.selection = 3;
+    update(
+        &mut model,
+        Msg::Stream(TranscriptEvent::Snapshot(TranscriptSnapshot {
+            entries: vec![entry(50, 50)],
+            epoch: 2,
+            generation: 3,
+            max_sequence: 50,
+            reset: true,
+            reason: Some("epoch_mismatch".into()),
+            ..TranscriptSnapshot::default()
+        })),
+    );
+    assert_eq!(model.selection, 0);
+    assert_eq!(model.transcript.len(), 1);
+}
+
+#[test]
 fn ut_156_dirty_tick_requests_one_render() {
     let mut model = model();
     model.dirty = false;
