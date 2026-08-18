@@ -6,6 +6,14 @@
 `scripts/capture-fixtures.sh`; content, filesystem paths, and socket paths are
 redacted or bounded by that script.
 
+Delivery-2 read fixtures `overview.json`, `loop_runs.json`, `loop_run.json`,
+`loop_events.sse`, `logs.json`, `logs_stream.sse`, `catalog.sse`, and
+`clarifications.json` are captured by the same GET-only script. Loop events
+come from the first done run in the bounded list (or the newest run when none
+is done); stream captures are trimmed to roughly 30 lines. The catalog capture
+always includes the opening ready comment and includes one wake event only if
+one naturally occurs during the four-second read-only window.
+
 `error_503_draining.json` is hand-authored from the API error contract because
 a healthy daemon cannot be made to drain through a read-only capture. `session_stopped.sse`
 is hand-authored from the daemon's `SessionStoppedPayload` Go struct because a

@@ -1,0 +1,5 @@
+: session catalog stream ready
+
+event: session_catalog_changed
+data: {"kind":"upserted","workspace_id":"ws_e619d7250e618324","session_id":"sess_72b0a4ad5697122e423773890a03a0bf"}
+

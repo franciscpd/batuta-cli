@@ -1,0 +1,15 @@
+{
+  "overview": {
+    "schema_version": "observe-overview/v1",
+    "generated_at": "2026-08-18T11:18:55.523071597Z",
+    "attention": {
+      "total": 0,
+      "by_kind": {
+        "approval": 0,
+        "failure": 0,
+        "needs_input": 0
+      },
+      "items": []
+    }
+  }
+}

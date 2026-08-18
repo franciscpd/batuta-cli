@@ -1,0 +1,30 @@
+id: 1
+event: status_changed
+data: {"id":"loopevt-6f94ec4bd4b008cc","loop_run_id":"looprun-1c4ef728a0628179","workspace_id":"ws_e619d7250e618324","seq":1,"kind":"status_changed","payload":{"cause":"start","from":"","status":"running","to":"running"},"at":"2026-08-17T22:46:28.151383296Z"}
+
+id: 2
+event: generation_started
+data: {"id":"loopevt-94632965083e4392","loop_run_id":"looprun-1c4ef728a0628179","workspace_id":"ws_e619d7250e618324","seq":2,"kind":"generation_started","payload":{"generation":1,"loop_name":"review-and-fix","origin":"initial","parent_generation":0,"reattempt_strategy":"failed_only"},"at":"2026-08-17T22:46:28.199437047Z"}
+
+id: 3
+event: generation_started
+data: {"id":"loopevt-f9f88338b5047558","loop_run_id":"looprun-1c4ef728a0628179","workspace_id":"ws_e619d7250e618324","seq":3,"kind":"generation_started","payload":{"generation":1,"loop_name":"review-and-fix","origin":"initial","parent_generation":0,"reattempt_strategy":"failed_only"},"at":"2026-08-17T22:46:28.199437047Z"}
+
+id: 4
+event: node_running
+data: {"id":"loopevt-5b0885183b8e4baf","loop_run_id":"looprun-1c4ef728a0628179","workspace_id":"ws_e619d7250e618324","seq":4,"kind":"node_running","payload":{"generation":1,"item_index":0,"node_id":"review","status":"running","task_id":"loop.looprun-1c4ef728a0628179.g1.node.review.0","task_run_id":"run.loop.looprun-1c4ef728a0628179.g1.node.review.0"},"at":"2026-08-17T22:46:28.278960803Z"}
+
+id: 5
+event: runtime_applied
+data: {"id":"loopevt-c889c0e4cb8f7225","loop_run_id":"looprun-1c4ef728a0628179","workspace_id":"ws_e619d7250e618324","seq":5,"kind":"runtime_applied","payload":{"generation":1,"item_index":0,"node_id":"review","resolved_runtime":{"model":"claude-sonnet-5","provider":"claude","reasoning":"high","source":{"model":"agent","provider":"agent","reasoning":"agent"}}},"at":"2026-08-17T22:46:30.06774385Z"}
+
+id: 6
+event: node_succeeded
+data: {"id":"loopevt-fc2fcf3b01296a29","loop_run_id":"looprun-1c4ef728a0628179","workspace_id":"ws_e619d7250e618324","seq":6,"kind":"node_succeeded","payload":{"generation":1,"item_index":0,"node_id":"review","status":"succeeded","task_id":"loop.looprun-1c4ef728a0628179.g1.node.review.0","task_run_id":"run.loop.looprun-1c4ef728a0628179.g1.node.review.0"},"at":"2026-08-17T22:52:55.932000831Z"}
+
+id: 7
+event: token_tick
+data: {"id":"loopevt-de46434d19e95683","loop_run_id":"looprun-1c4ef728a0628179","workspace_id":"ws_e619d7250e618324","seq":7,"kind":"token_tick","payload":{"task_run_id":"run.loop.looprun-1c4ef728a0628179.g1.node.review.0","terminal":true,"tokens_used":5169714},"at":"2026-08-17T22:52:55.932000831Z"}
+
+id: 8
+event: node_running

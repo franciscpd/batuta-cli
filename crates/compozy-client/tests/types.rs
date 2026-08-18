@@ -1,7 +1,8 @@
 use compozy_client::types::{
-    Clarification, ClarifyAnswer, ClarifyResult, Decision, ErrorPayload, Part, PermissionData,
-    PromptMode, PromptResult, Session, SessionPage, SessionResponse, SessionStopped, StatusPayload,
-    Timestamp, TranscriptPage, TranscriptSnapshot, WorkspacesResponse,
+    Clarification, ClarifyAnswer, ClarifyResult, Decision, ErrorPayload, LogEvent, LoopEvent,
+    LoopRunDetail, LoopRunPage, OverviewResponse, Part, PermissionData, PromptMode, PromptResult,
+    Session, SessionPage, SessionResponse, SessionStopped, StatusPayload, Timestamp,
+    TranscriptPage, TranscriptSnapshot, WorkspacesResponse,
 };
 use serde_json::{Value, json};
 
@@ -9,6 +10,48 @@ const FIXTURES: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures");
 
 fn fixture(name: &str) -> String {
     std::fs::read_to_string(format!("{FIXTURES}/{name}")).expect("fixture is committed")
+}
+
+#[test]
+fn ut_340_delivery_two_fixtures_decode() {
+    let _: LoopRunPage = serde_json::from_str(&fixture("loop_runs.json")).unwrap();
+    let _: LoopRunDetail = serde_json::from_str(&fixture("loop_run.json")).unwrap();
+    let _: OverviewResponse = serde_json::from_str(&fixture("overview.json")).unwrap();
+    let logs: Value = serde_json::from_str(&fixture("logs.json")).unwrap();
+    for event in logs["events"].as_array().unwrap() {
+        let _: LogEvent = serde_json::from_value(event.clone()).unwrap();
+    }
+    let clarifications: Value = serde_json::from_str(&fixture("clarifications.json")).unwrap();
+    assert!(clarifications["clarifications"].is_array());
+    for name in ["loop_events.sse", "logs_stream.sse", "catalog.sse"] {
+        let stream = fixture(name);
+        for data in stream
+            .lines()
+            .filter_map(|line| line.strip_prefix("data: "))
+        {
+            match name {
+                "loop_events.sse" => {
+                    let _: LoopEvent = serde_json::from_str(data).unwrap();
+                }
+                "logs_stream.sse" => {
+                    let _: LogEvent = serde_json::from_str(data).unwrap();
+                }
+                _ => {
+                    let _: compozy_client::types::CatalogEvent =
+                        serde_json::from_str(data).unwrap();
+                }
+            }
+        }
+    }
+    let _: SessionResponse = serde_json::from_str(&fixture("session_created.json")).unwrap();
+    for name in [
+        "prompt_409.json",
+        "prompt_413.json",
+        "approve_409.json",
+        "clarify_404.json",
+    ] {
+        let _: ErrorPayload = serde_json::from_str(&fixture(name)).unwrap();
+    }
 }
 
 #[test]

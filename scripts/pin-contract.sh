@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Pin the six GET route items and their component-schema $ref closure deterministically.
+# Pin the consumed route items and their component-schema $ref closure deterministically.
 set -euo pipefail
 
 checkout=${1:?usage: pin-contract.sh <compozy-checkout> <commit>}

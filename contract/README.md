@@ -15,5 +15,8 @@ of client routes. The script uses a detached worktree and sorted JSON, so
 re-running against the same source must produce no diff.
 
 Task retry uses the pinned task-run enqueue operation:
-`POST /api/tasks/{id}/runs`. Task 2 re-runs the pin after the delivery-2 route
-list is complete.
+`POST /api/tasks/{id}/runs`. The delivery-2 pin includes the session catalog,
+loop-run reads/events/controls, overview, and logs list/stream routes. The
+authored client retains workspace-scoped task approve/reject even though the
+pinned daemon revision does not expose those two operations at those paths;
+the pin preserves that mismatch so drift remains visible.

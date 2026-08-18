@@ -1,5 +1,8 @@
 mod clarify;
 pub mod error;
+mod logs;
+mod loops;
+mod observe;
 mod request;
 mod sessions;
 pub mod sse;
@@ -11,8 +14,13 @@ pub mod types;
 mod workspaces;
 
 pub use error::Error;
+pub use logs::LogQuery;
+pub use loops::{GateDecision, LoopRunQuery, RunControl};
 pub use sessions::SessionQuery;
-pub use sse::{ReconnectPolicy, ResetReason, StreamCursor, TranscriptEvent};
+pub use sse::{
+    CatalogEvent, Cursor, EventStream, LogCursor, LoopEvent, NoCursor, ReconnectPolicy,
+    ResetReason, SeqCursor, StreamCursor, StreamEvent, TranscriptEvent,
+};
 pub use tasks::TaskVerb;
 pub use transcript::TranscriptQuery;
 pub use transport::{Outcome, ProbeReport, TargetOutcome, Transport, TransportOrder};

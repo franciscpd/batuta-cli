@@ -1,0 +1,313 @@
+{
+  "run": {
+    "id": "looprun-1c4ef728a0628179",
+    "workspace_id": "ws_e619d7250e618324",
+    "loop_name": "review-and-fix",
+    "status": "done",
+    "generation": 3,
+    "reattempt_strategy": "failed_only",
+    "created_at": "2026-08-17T22:46:28.151383296Z",
+    "started_at": "2026-08-17T22:46:28.151383296Z",
+    "last_progress_at": "2026-08-18T00:20:00.628352836Z",
+    "started_by_kind": "daemon",
+    "started_by_ref": "loop-action",
+    "started_origin_kind": "daemon",
+    "started_origin_ref": "daemon.loop-action",
+    "definition_version": 0,
+    "definition_digest": "sha256:9d62fe5433f96d3dbf116e2d020f3f0ccda909f1b31414ba0b000070267e87bb",
+    "iteration_cap": 50,
+    "budget_tokens": 0,
+    "budget_wall_sec": 0,
+    "budget_on_exceeded": "halt",
+    "tokens_used": 46226890,
+    "parent_loop_run_id": "looprun-5c13e59e1cf48305",
+    "pause_requested": false,
+    "resolved_network_participation": {
+      "version": "network-participation/v1",
+      "mode": "local",
+      "source": "built_in_local"
+    }
+  },
+  "generations": [
+    {
+      "generation": 1,
+      "parent_generation": 0,
+      "origin": "initial",
+      "verdicts": [],
+      "outputs": [
+        {
+          "generation": 1,
+          "node_id": "collect_fixes",
+          "status": "succeeded",
+          "attempt": 1
+        },
+        {
+          "generation": 1,
+          "node_id": "finalize_round",
+          "status": "succeeded",
+          "task_run_id": "run.loop.looprun-1c4ef728a0628179.g1.node.finalize_round.0",
+          "attempt": 1,
+          "disposition": "succeeded"
+        },
+        {
+          "generation": 1,
+          "node_id": "fix_batch",
+          "status": "succeeded",
+          "task_run_id": "run.loop.looprun-1c4ef728a0628179.g1.node.fix_batch.0",
+          "session_id": "sess_30c2b108d55930a872048a1e33724fe6",
+          "resolved_runtime": {
+            "provider": "claude",
+            "model": "claude-sonnet-5",
+            "reasoning": "high",
+            "source": {
+              "provider": "agent",
+              "model": "agent",
+              "reasoning": "agent"
+            }
+          },
+          "attempt": 1,
+          "disposition": "succeeded"
+        },
+        {
+          "generation": 1,
+          "node_id": "fix_batch",
+          "item_index": 1,
+          "status": "succeeded",
+          "task_run_id": "run.loop.looprun-1c4ef728a0628179.g1.node.fix_batch.1",
+          "session_id": "sess_c64cfb59a33a63929e037e6dfebfce87",
+          "resolved_runtime": {
+            "provider": "claude",
+            "model": "claude-sonnet-5",
+            "reasoning": "high",
+            "source": {
+              "provider": "agent",
+              "model": "agent",
+              "reasoning": "agent"
+            }
+          },
+          "attempt": 1,
+          "disposition": "succeeded"
+        },
+        {
+          "generation": 1,
+          "node_id": "fix_batches",
+          "status": "succeeded",
+          "attempt": 1
+        },
+        {
+          "generation": 1,
+          "node_id": "has_issues",
+          "status": "succeeded",
+          "attempt": 1
+        },
+        {
+          "generation": 1,
+          "node_id": "review",
+          "status": "succeeded",
+          "task_run_id": "run.loop.looprun-1c4ef728a0628179.g1.node.review.0",
+          "session_id": "sess_69ee0acda2c92ddb8c299502d698ffef",
+          "resolved_runtime": {
+            "provider": "claude",
+            "model": "claude-sonnet-5",
+            "reasoning": "high",
+            "source": {
+              "provider": "agent",
+              "model": "agent",
+              "reasoning": "agent"
+            }
+          },
+          "attempt": 1,
+          "disposition": "succeeded"
+        },
+        {
+          "generation": 1,
+          "node_id": "write_artifacts",
+          "status": "succeeded",
+          "task_run_id": "run.loop.looprun-1c4ef728a0628179.g1.node.write_artifacts.0",
+          "attempt": 1,
+          "disposition": "succeeded"
+        }
+      ]
+    },
+    {
+      "generation": 2,
+      "parent_generation": 1,
+      "origin": "stop_when",
+      "verdicts": [],
+      "outputs": [
+        {
+          "generation": 2,
+          "node_id": "collect_fixes",
+          "status": "succeeded",
+          "attempt": 1
+        },
+        {
+          "generation": 2,
+          "node_id": "finalize_round",
+          "status": "succeeded",
+          "task_run_id": "run.loop.looprun-1c4ef728a0628179.g2.node.finalize_round.0",
+          "attempt": 1,
+          "disposition": "succeeded"
+        },
+        {
+          "generation": 2,
+          "node_id": "fix_batch",
+          "status": "succeeded",
+          "task_run_id": "run.loop.looprun-1c4ef728a0628179.g2.node.fix_batch.0.a2",
+          "session_id": "sess_a5e6a891e8dcc413cb9a1242bbe55a1e",
+          "resolved_runtime": {
+            "provider": "claude",
+            "model": "claude-sonnet-5",
+            "reasoning": "high",
+            "source": {
+              "provider": "agent",
+              "model": "agent",
+              "reasoning": "agent"
+            }
+          },
+          "attempt": 2,
+          "disposition": "succeeded"
+        },
+        {
+          "generation": 2,
+          "node_id": "fix_batch",
+          "item_index": 1,
+          "status": "succeeded",
+          "task_run_id": "run.loop.looprun-1c4ef728a0628179.g2.node.fix_batch.1",
+          "session_id": "sess_0c8ef279ed5a54affb4368eeb435e9c3",
+          "resolved_runtime": {
+            "provider": "claude",
+            "model": "claude-sonnet-5",
+            "reasoning": "high",
+            "source": {
+              "provider": "agent",
+              "model": "agent",
+              "reasoning": "agent"
+            }
+          },
+          "attempt": 1,
+          "disposition": "succeeded"
+        },
+        {
+          "generation": 2,
+          "node_id": "fix_batches",
+          "status": "succeeded",
+          "attempt": 1
+        },
+        {
+          "generation": 2,
+          "node_id": "has_issues",
+          "status": "succeeded",
+          "attempt": 1
+        },
+        {
+          "generation": 2,
+          "node_id": "review",
+          "status": "succeeded",
+          "task_run_id": "run.loop.looprun-1c4ef728a0628179.g2.node.review.0",
+          "session_id": "sess_28d59ef33c4c7f480cb81ba64dbee584",
+          "resolved_runtime": {
+            "provider": "claude",
+            "model": "claude-sonnet-5",
+            "reasoning": "high",
+            "source": {
+              "provider": "agent",
+              "model": "agent",
+              "reasoning": "agent"
+            }
+          },
+          "attempt": 1,
+          "disposition": "succeeded"
+        },
+        {
+          "generation": 2,
+          "node_id": "write_artifacts",
+          "status": "succeeded",
+          "task_run_id": "run.loop.looprun-1c4ef728a0628179.g2.node.write_artifacts.0",
+          "attempt": 1,
+          "disposition": "succeeded"
+        }
+      ]
+    },
+    {
+      "generation": 3,
+      "parent_generation": 2,
+      "origin": "stop_when",
+      "verdicts": [],
+      "outputs": [
+        {
+          "generation": 3,
+          "node_id": "collect_fixes",
+          "status": "succeeded",
+          "attempt": 1
+        },
+        {
+          "generation": 3,
+          "node_id": "finalize_round",
+          "status": "succeeded",
+          "attempt": 1
+        },
+        {
+          "generation": 3,
+          "node_id": "fix_batches",
+          "status": "succeeded",
+          "attempt": 1
+        },
+        {
+          "generation": 3,
+          "node_id": "has_issues",
+          "status": "succeeded",
+          "attempt": 1
+        },
+        {
+          "generation": 3,
+          "node_id": "review",
+          "status": "succeeded",
+          "task_run_id": "run.loop.looprun-1c4ef728a0628179.g3.node.review.0",
+          "session_id": "sess_515c381cfe9752160fcc8037bd5a0419",
+          "resolved_runtime": {
+            "provider": "claude",
+            "model": "claude-sonnet-5",
+            "reasoning": "high",
+            "source": {
+              "provider": "agent",
+              "model": "agent",
+              "reasoning": "agent"
+            }
+          },
+          "attempt": 1,
+          "disposition": "succeeded"
+        },
+        {
+          "generation": 3,
+          "node_id": "write_artifacts",
+          "status": "succeeded",
+          "attempt": 1
+        }
+      ]
+    }
+  ],
+  "node_controls": [
+    {
+      "loop_run_id": "looprun-1c4ef728a0628179",
+      "node_id": "fix_batch",
+      "paused": false,
+      "quarantined": false,
+      "last_evidence_at": "2026-08-18T00:14:41.674770558Z",
+      "death_resume_streak": 0,
+      "revision": 1,
+      "updated_at": "2026-08-18T00:14:41.674770558Z"
+    },
+    {
+      "loop_run_id": "looprun-1c4ef728a0628179",
+      "node_id": "review",
+      "paused": false,
+      "quarantined": false,
+      "last_evidence_at": "2026-08-18T00:19:35.212895206Z",
+      "death_resume_streak": 0,
+      "revision": 1,
+      "updated_at": "2026-08-18T00:19:35.212895206Z"
+    }
+  ],
+  "waits": []
+}
