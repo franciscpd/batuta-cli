@@ -33,11 +33,16 @@ fn delta(id: i64) -> String {
 }
 
 async fn wait_for_requests(server: &SseServer, count: usize) {
-    for _ in 0..100 {
+    // `SseServer` accepts in bounded (real-time) bursts rather than a single
+    // instant async accept (see its module docs), so a request can take a few
+    // milliseconds of wall-clock time to be recorded even on a fresh
+    // connection; poll with a small real sleep rather than a bare
+    // `yield_now`, which can exhaust its budget in well under a millisecond.
+    for _ in 0..200 {
         if server.requests().len() >= count {
             return;
         }
-        tokio::task::yield_now().await;
+        tokio::time::sleep(Duration::from_millis(5)).await;
     }
     panic!("expected {count} requests, got {}", server.requests().len());
 }
@@ -393,6 +398,17 @@ async fn ut_057_reconnect_while_draining_accepts_stream_success() {
         events.next().await,
         Some(TranscriptEvent::Snapshot(_))
     ));
+}
+
+#[tokio::test(start_paused = true)]
+async fn ut_connect_response_headers_timeout_retries() {
+    let server = SseServer::start(vec![ResponseSpec::HangBeforeHeaders]).await;
+    let (_, rx) = channel(StreamCursor::default());
+    let events = Client::tcp(server.address()).transcript_stream("ws", "sess", rx, exact_policy());
+    pin_mut!(events);
+    assert!(
+        matches!(events.next().await, Some(TranscriptEvent::Lost { attempt: 1, ref error, .. }) if error.contains("idle timeout"))
+    );
 }
 
 #[tokio::test(start_paused = true)]

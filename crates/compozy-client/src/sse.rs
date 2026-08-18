@@ -262,8 +262,9 @@ impl Client {
                 HttpClient::Tcp(client) => client.request(request).await,
             }
         };
-        let response = operation
+        let response = tokio::time::timeout(idle_timeout, operation)
             .await
+            .map_err(|_| ConnectFailure::Retry(format!("idle timeout after {idle_timeout:?}")))?
             .map_err(|error| ConnectFailure::Retry(error.to_string()))?;
 
         let status = response.status();
