@@ -1,0 +1,133 @@
+use crate::{Error, Result};
+use std::{
+    net::SocketAddr,
+    sync::{Arc, Mutex},
+};
+use tokio::{
+    io::{AsyncReadExt, AsyncWriteExt},
+    net::{TcpListener, TcpStream},
+    sync::oneshot,
+    task::JoinHandle,
+};
+
+#[derive(Clone, Default)]
+pub struct RequestLog(Arc<Mutex<Vec<(String, String)>>>);
+
+impl RequestLog {
+    pub fn entries(&self) -> Vec<(String, String)> {
+        self.0.lock().expect("request log lock poisoned").clone()
+    }
+
+    pub fn clear(&self) {
+        self.0.lock().expect("request log lock poisoned").clear();
+    }
+
+    fn push(&self, method: &str, path: &str) {
+        self.0
+            .lock()
+            .expect("request log lock poisoned")
+            .push((method.to_owned(), path.to_owned()));
+    }
+}
+
+pub(crate) struct Proxy {
+    addr: SocketAddr,
+    stop: Option<oneshot::Sender<()>>,
+    task: JoinHandle<()>,
+}
+
+impl Proxy {
+    pub async fn start(target: SocketAddr, log: RequestLog) -> Result<Self> {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).await?;
+        let addr = listener.local_addr()?;
+        let (stop, mut stopped) = oneshot::channel();
+        let task = tokio::spawn(async move {
+            loop {
+                tokio::select! {
+                    _ = &mut stopped => break,
+                    accepted = listener.accept() => {
+                        let Ok((client, _)) = accepted else { break };
+                        let log = log.clone();
+                        tokio::spawn(async move {
+                            let _ = forward(client, target, log).await;
+                        });
+                    }
+                }
+            }
+        });
+        Ok(Self {
+            addr,
+            stop: Some(stop),
+            task,
+        })
+    }
+
+    pub fn addr(&self) -> SocketAddr {
+        self.addr
+    }
+}
+
+impl Drop for Proxy {
+    fn drop(&mut self) {
+        if let Some(stop) = self.stop.take() {
+            let _ = stop.send(());
+        }
+        self.task.abort();
+    }
+}
+
+async fn forward(mut client: TcpStream, target: SocketAddr, log: RequestLog) -> Result<()> {
+    let mut request = Vec::with_capacity(4096);
+    let header_end = loop {
+        if request.len() > 1024 * 1024 {
+            return Err(Error::Message("proxy request headers exceed 1 MiB".into()));
+        }
+        let mut chunk = [0_u8; 4096];
+        let read = client.read(&mut chunk).await?;
+        if read == 0 {
+            return Ok(());
+        }
+        request.extend_from_slice(&chunk[..read]);
+        if let Some(index) = request.windows(4).position(|bytes| bytes == b"\r\n\r\n") {
+            break index + 4;
+        }
+    };
+    let headers = String::from_utf8_lossy(&request[..header_end]).into_owned();
+    let first = headers.lines().next().unwrap_or_default();
+    let mut fields = first.split_whitespace();
+    let method = fields.next().unwrap_or_default();
+    let path = fields.next().unwrap_or_default();
+    log.push(method, path);
+    let content_length = headers
+        .lines()
+        .find_map(|line| {
+            line.strip_prefix("Content-Length:")
+                .or_else(|| line.strip_prefix("content-length:"))
+        })
+        .and_then(|value| value.trim().parse::<usize>().ok())
+        .unwrap_or(0);
+    while request.len() < header_end + content_length {
+        let mut chunk = [0_u8; 4096];
+        let read = client.read(&mut chunk).await?;
+        if read == 0 {
+            break;
+        }
+        request.extend_from_slice(&chunk[..read]);
+    }
+
+    let mut forwarded = Vec::with_capacity(request.len() + 24);
+    for (index, line) in headers.trim_end_matches("\r\n").split("\r\n").enumerate() {
+        if index > 0 && line.to_ascii_lowercase().starts_with("connection:") {
+            continue;
+        }
+        forwarded.extend_from_slice(line.as_bytes());
+        forwarded.extend_from_slice(b"\r\n");
+    }
+    forwarded.extend_from_slice(b"Connection: close\r\n\r\n");
+    forwarded.extend_from_slice(&request[header_end..]);
+
+    let mut upstream = TcpStream::connect(target).await?;
+    upstream.write_all(&forwarded).await?;
+    let _ = tokio::io::copy(&mut upstream, &mut client).await?;
+    Ok(())
+}

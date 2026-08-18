@@ -1,0 +1,21 @@
+[package]
+name = "batuta-tui"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+compozy-client = { path = "../compozy-client" }
+crossterm.workspace = true
+futures-util.workspace = true
+ratatui.workspace = true
+tokio.workspace = true
+tokio-util.workspace = true
+tracing.workspace = true
+tui-markdown.workspace = true
+unicode-width.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+insta = "1.48"

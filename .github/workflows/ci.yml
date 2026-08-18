@@ -1,0 +1,72 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+env:
+  COMPOZY_TEST_DAEMON_BIN: ${{ vars.COMPOZY_TEST_DAEMON_BIN }}
+
+jobs:
+  fmt:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - run: cargo fmt --check
+
+  clippy:
+    needs: fmt
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        rust: ["1.88", stable]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ matrix.rust }}
+          components: clippy
+      - run: cargo build --workspace
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+
+  test:
+    needs: fmt
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        rust: ["1.88", stable]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ matrix.rust }}
+      - run: cargo test --workspace
+
+  boundaries:
+    needs: fmt
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: scripts/check-boundaries.sh
+
+  contract:
+    needs: [fmt, test]
+    if: github.event_name == 'workflow_dispatch' || env.COMPOZY_TEST_DAEMON_BIN != ''
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Run contract tests when their task is present
+        run: |
+          if [[ -f crates/compozy-client/tests/contract.rs ]]; then
+            cargo test -p compozy-client --test contract
+          else
+            echo 'contract tests are delivered in task_05'
+          fi

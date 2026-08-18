@@ -30,24 +30,28 @@ changing defaults, not rewriting.
 
 ## Facts about the daemon this design relies on
 
-Verified against `compozy/compozy` at commit `069f8b25` (2026-08-17):
+Verified against `compozy/compozy` at commit `a35eda6d` (daemon
+`v0.3.0-beta.16-9-ga35eda6d`, 2026-08-17):
 
 - Two listeners with identical route sets: plain HTTP on `localhost:2123`
   and plain HTTP over the Unix socket `$COMPOZY_HOME/daemon.sock`
   (default `~/.compozy/daemon.sock`, mode 0600). No authentication on the
   local surface; browser-origin protection only fires when `Origin` or
   `Sec-Fetch-Site` headers are present.
-- Contract: `openapi/compozy.json` (OpenAPI 3.0.3, 371 paths). Reference
-  client: `internal/cli/client*.go`.
+- Contract: `openapi/compozy.json` (OpenAPI 3.0.3, 371 paths); its
+  `info.version` is the constant `"1.0.0"`. Reference client:
+  `internal/cli/client*.go`.
 - SSE streams: `GET /api/workspaces/{ws}/sessions/{id}/stream`
-  (`transcript_snapshot`, `transcript_delta`, `session_stopped`, `done`;
-  reconnect with `Last-Event-ID`/`after_sequence` plus `epoch` and
-  `generation`; a fence mismatch returns a snapshot with `reset:true`),
+  (`transcript_snapshot`, `transcript_delta`, `session_stopped`,
+  `goal_snapshot_changed`, `session_commands_changed`, `error`; keepalives
+  are SSE comments, and `done` is not emitted in transcript mode; reconnect
+  with `Last-Event-ID`/`after_sequence` plus `epoch` and `generation`; a fence
+  mismatch returns a snapshot with `reset:true`),
   `GET /api/sessions/catalog-stream`, `GET /api/logs/stream` (cursor
   `RFC3339Nano|sequence`), `GET /api/workspaces/{ws}/loop-runs/{id}/events`.
 - Transcript entries are Vercel AI SDK `UIMessage` values: `{message:{id,
   role, parts[]}, start_sequence, sequence}` with part types `text`,
-  `reasoning`, `dynamic-tool` (`state` in `input-streaming |
+  `reasoning`, `tool-<toolName>` or `dynamic-tool` (`state` in `input-streaming |
   input-available | output-available | output-error`), `file`,
   `data-compozy-permission`, `data-compozy-event`, plus a closed marker
   vocabulary (`prompt_queued`, `provider_failure`,
@@ -220,8 +224,10 @@ Concurrency: every stream is a tokio task sending `Msg` values through one
 `mpsc` channel into the UI loop; render at most 30 FPS, coalescing deltas
 that arrive within one tick; no HTTP on the render thread.
 
-Workspace resolution: `--workspace`, then `COMPOZY_WORKSPACE`, then the
-current directory via `GET /api/workspaces/resolve`, then the picker.
+Workspace resolution: `--workspace`, then `COMPOZY_WORKSPACE`, then
+`GET /api/workspaces`; the client matches the canonical current directory
+against canonical workspace roots using the longest prefix (ADR-002), then
+the picker. `GET /api/workspaces` is not paginated.
 Switching workspaces cancels every stream task and re-runs panel boot.
 
 ## Errors and edge cases
@@ -237,7 +243,8 @@ Switching workspaces cancels every stream task and re-runs panel boot.
   reports "route missing in this daemon version" instead of crashing.
 - Draining (`503 daemon is draining`): writes show the daemon's message in
   a toast; reads continue.
-- HTTP errors keep the daemon's structured `code` and `message`. A `409`
+- HTTP errors keep the daemon's structured envelope `{error, code?, details?,
+  diagnostic?}`. A `409`
   on prompt means an indeterminate dispatch: toast "check the session"
   and no automatic retry. A fence conflict (`revision`,
   `expected_turn_id`) refetches and asks the user to repeat the action.

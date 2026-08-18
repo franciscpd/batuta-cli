@@ -1,0 +1,3 @@
+event: session_stopped
+data: {"session_id":"sess_example","stop_reason":"completed","stop_detail":"completed normally","timestamp":"2026-08-16T11:16:13Z"}
+

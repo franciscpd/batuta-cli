@@ -1,0 +1,6 @@
+GET /api/status
+GET /api/workspaces
+GET /api/sessions
+GET /api/workspaces/{workspace_id}/sessions/{session_id}
+GET /api/workspaces/{workspace_id}/sessions/{session_id}/transcript
+GET /api/workspaces/{workspace_id}/sessions/{session_id}/stream

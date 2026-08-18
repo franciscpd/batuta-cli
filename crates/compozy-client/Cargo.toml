@@ -1,0 +1,33 @@
+[package]
+name = "compozy-client"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+bytes.workspace = true
+async-stream = "0.3"
+eventsource-stream.workspace = true
+form_urlencoded.workspace = true
+futures-util.workspace = true
+http.workspace = true
+http-body-util.workspace = true
+hyper.workspace = true
+hyper-util.workspace = true
+rand = "0.9"
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+time.workspace = true
+tokio.workspace = true
+tower-service.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+compozy-testkit = { path = "../compozy-testkit" }
+hyper = { workspace = true, features = ["server"] }
+libc.workspace = true
+tempfile.workspace = true
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "test-util"] }
+wiremock.workspace = true

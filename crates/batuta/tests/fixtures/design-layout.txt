@@ -1,0 +1,22 @@
+A single multi-panel application in the lazygit style. Panels keep fixed
+positions; focus moves with `Tab` or the panel number; the detail panel
+follows the focused list.
+
+```
+┌ batuta ─ ws: batuta-compozy ▾ ─ daemon ok ─ 2 attention ───────────────────┐
+├─[1] Sessions ────────┬─[4] Session: batuta · "spec login" ────────────────┤
+│ > batuta  spec login │ user  ▸ implement login with magic link            │
+│   batuta  fix ci     │ batuta                                             │
+│   general  review    │   ▶ cy-create-spec  (tool · done)                  │
+├─[2] Deliver runs ────┤   ▶ cy-create-tasks (tool · done · 4 tasks)         │
+│ ● run 8f2a  running  │   Dispatched batuta-deliver (run 8f2a)…            │
+│   run 7c10  succeeded│   ▶ loop_start (tool · running)                    │
+│   run 6b91  failed   │ ─ marker: prompt_accepted ─                        │
+├─[3] Attention (2) ───┤                                                    │
+│ ! approve  Bash rm…  │                                                    │
+│ ! clarify  which env?├────────────────────────────────────────────────────┤
+│                      │ > _                                   [Enter] send  │
+├──────────────────────┴────────────────────────────────────────────────────┤
+│ 1-4 focus  j/k move  Enter open  a approve  x reject  w workspace  ? help │
+└───────────────────────────────────────────────────────────────────────────┘
+```

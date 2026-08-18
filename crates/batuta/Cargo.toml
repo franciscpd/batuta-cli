@@ -1,0 +1,29 @@
+[package]
+name = "batuta"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+clap.workspace = true
+batuta-tui = { path = "../batuta-tui" }
+compozy-client = { path = "../compozy-client" }
+crossterm.workspace = true
+ratatui.workspace = true
+semver.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+time.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-appender.workspace = true
+tracing-subscriber.workspace = true
+unicode-width.workspace = true
+
+[dev-dependencies]
+assert_cmd = "2"
+compozy-testkit = { path = "../compozy-testkit" }
+predicates = "3"
+tempfile.workspace = true
+wiremock.workspace = true
