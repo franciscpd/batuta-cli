@@ -25,6 +25,14 @@ pub trait RuntimeClient: Clone + Send + Sync + 'static {
         id: StreamId,
         cursor: watch::Receiver<String>,
     ) -> BoxStream<'static, AnyStreamEvent>;
+    fn stream_with_options(
+        &self,
+        id: StreamId,
+        cursor: watch::Receiver<String>,
+        _error_only: bool,
+    ) -> BoxStream<'static, AnyStreamEvent> {
+        self.stream(id, cursor)
+    }
 }
 
 impl RuntimeClient for Client {
@@ -230,7 +238,15 @@ impl RuntimeClient for Client {
         id: StreamId,
         cursor: watch::Receiver<String>,
     ) -> BoxStream<'static, AnyStreamEvent> {
-        client_stream(self.clone(), String::new(), id, cursor)
+        client_stream(self.clone(), String::new(), id, cursor, false)
+    }
+    fn stream_with_options(
+        &self,
+        id: StreamId,
+        cursor: watch::Receiver<String>,
+        error_only: bool,
+    ) -> BoxStream<'static, AnyStreamEvent> {
+        client_stream(self.clone(), String::new(), id, cursor, error_only)
     }
 }
 
@@ -276,7 +292,27 @@ impl RuntimeClient for ScopedClient {
         id: StreamId,
         cursor: watch::Receiver<String>,
     ) -> BoxStream<'static, AnyStreamEvent> {
-        client_stream(self.client.clone(), self.workspace.clone(), id, cursor)
+        client_stream(
+            self.client.clone(),
+            self.workspace.clone(),
+            id,
+            cursor,
+            false,
+        )
+    }
+    fn stream_with_options(
+        &self,
+        id: StreamId,
+        cursor: watch::Receiver<String>,
+        error_only: bool,
+    ) -> BoxStream<'static, AnyStreamEvent> {
+        client_stream(
+            self.client.clone(),
+            self.workspace.clone(),
+            id,
+            cursor,
+            error_only,
+        )
     }
 }
 
@@ -285,6 +321,7 @@ fn client_stream(
     workspace: String,
     id: StreamId,
     mut cursor: watch::Receiver<String>,
+    error_only: bool,
 ) -> BoxStream<'static, AnyStreamEvent> {
     match id {
         StreamId::Transcript(session) => {
@@ -347,7 +384,7 @@ fn client_stream(
                 workspace_id: &workspace,
                 session_id,
                 run,
-                error_only: false,
+                error_only,
                 after_seq: None,
                 limit: 200,
             };
@@ -558,7 +595,14 @@ where
                 tasks.stop_stream(&id).await;
                 let initial = model.stream_cursors.get(&id).cloned().unwrap_or_default();
                 let (cursor_tx, cursor_rx) = watch::channel(initial);
-                let mut events = client.stream(id.clone(), cursor_rx);
+                let error_only = matches!(
+                    (&id, &model.overlay),
+                    (
+                        StreamId::Logs(stream_scope),
+                        Some(crate::app::Overlay::Logs { scope, error_only:true, .. })
+                    ) if stream_scope == scope
+                );
+                let mut events = client.stream_with_options(id.clone(), cursor_rx, error_only);
                 let sender = sender.clone();
                 let message_id = id.clone();
                 let task = tokio::spawn(async move {

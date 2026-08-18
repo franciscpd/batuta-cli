@@ -75,24 +75,51 @@ pub(super) fn stream(model: &mut Model, id: StreamId, event: AnyStreamEvent) -> 
         }
         (StreamId::RunEvents(run), AnyStreamEvent::Run(StreamEvent::Event(event))) => {
             let seq = event.seq;
+            let mut terminal = false;
             if let crate::app::model::Detail::Run(detail) = &mut model.detail
                 && detail.run_id == run
             {
+                if detail.events.iter().any(|item| item.seq == seq) {
+                    return Vec::new();
+                }
+                if event.kind == "status_changed"
+                    && let Some(status) = event
+                        .payload
+                        .get("status")
+                        .and_then(serde_json::Value::as_str)
+                {
+                    terminal = crate::app::panels::runs::terminal(status);
+                    if let Some(value) = &mut detail.run {
+                        value.run.status = status.to_owned();
+                    }
+                }
                 detail.events.push(event);
+                detail.events.sort_by_key(|item| item.seq);
                 model.dirty = true;
             }
             model
                 .stream_cursors
-                .insert(StreamId::RunEvents(run), seq.to_string());
-            Vec::new()
+                .insert(StreamId::RunEvents(run.clone()), seq.to_string());
+            if terminal {
+                let stream = StreamId::RunEvents(run);
+                model.active_streams.remove(&stream);
+                vec![Cmd::StopStream(stream)]
+            } else {
+                Vec::new()
+            }
         }
         (StreamId::Logs(scope), AnyStreamEvent::Logs(StreamEvent::Event(event))) => {
             model.stream_cursors.insert(
-                StreamId::Logs(scope),
+                StreamId::Logs(scope.clone()),
                 format!("{}|{}", event.timestamp.raw(), event.id),
             );
+            super::logs::push(model, &scope, event);
             Vec::new()
         }
+        (
+            StreamId::Logs(scope),
+            AnyStreamEvent::Logs(StreamEvent::Fatal(Error::Daemon { status: 400, .. })),
+        ) => super::logs::cursor_reset(model, scope),
         _ => Vec::new(),
     };
     model.dirty = true;

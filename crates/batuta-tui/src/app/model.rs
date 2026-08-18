@@ -5,8 +5,8 @@ use crate::{
     transcript::TranscriptState,
 };
 use compozy_client::types::{
-    ApproveRequest, Clarification, Decision, Entry, LoopEvent, LoopRunAggregates, LoopRunDetail,
-    PermissionData, Session, Timestamp, TranscriptPage,
+    ApproveRequest, Clarification, Decision, Entry, LogEvent, LoopEvent, LoopRunAggregates,
+    LoopRunDetail, PermissionData, Session, Timestamp, TranscriptPage,
 };
 use ratatui::text::Text;
 use std::{
@@ -328,7 +328,7 @@ pub enum Detail {
     Session(Box<SessionDetail>),
     Run(Box<RunDetail>),
 }
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Overlay {
     Help {
         scroll: usize,
@@ -336,6 +336,9 @@ pub enum Overlay {
     Logs {
         scope: LogScope,
         error_only: bool,
+        events: Vec<LogEvent>,
+        selection: usize,
+        cursor_reset: bool,
     },
     WorkspacePicker {
         selected: Option<usize>,
@@ -418,6 +421,7 @@ pub struct Model {
     pub now_unix: i64,
     pub dirty: bool,
     pub pending: BTreeMap<RequestId, PendingKind>,
+    pub late_writes: BTreeMap<RequestId, Request>,
     pub active_streams: HashSet<StreamId>,
     pub stream_status: HashMap<StreamId, StreamStatus>,
     pub stream_cursors: HashMap<StreamId, String>,
@@ -479,6 +483,7 @@ impl Model {
                 .map_or(0, |value| value.as_secs() as i64),
             dirty: true,
             pending: BTreeMap::new(),
+            late_writes: BTreeMap::new(),
             active_streams: HashSet::new(),
             stream_status: HashMap::new(),
             stream_cursors: HashMap::new(),

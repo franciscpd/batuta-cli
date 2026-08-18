@@ -21,18 +21,38 @@ pub fn render(model: &Model, frame: &mut Frame<'_>) {
     let Some(overlay) = &model.overlay else {
         return;
     };
+    if let Some((title, lines, selected)) = super::logs::content(model) {
+        let area = centered(
+            frame.area(),
+            frame.area().width.saturating_sub(4),
+            frame.area().height.saturating_sub(2),
+        );
+        let height = usize::from(area.height.saturating_sub(2)).max(1);
+        let scroll = selected.saturating_sub(height.saturating_sub(1)) as u16;
+        frame.render_widget(Clear, area);
+        frame.render_widget(
+            Paragraph::new(lines)
+                .scroll((scroll, 0))
+                .block(Block::default().title(title).borders(Borders::ALL))
+                .style(model.theme.default),
+            area,
+        );
+        return;
+    }
+    if let Some((title, text)) = super::picker::content(model) {
+        let area = centered(frame.area(), 70, frame.area().height.saturating_sub(4));
+        frame.render_widget(Clear, area);
+        frame.render_widget(
+            Paragraph::new(text)
+                .block(Block::default().title(title).borders(Borders::ALL))
+                .style(model.theme.default),
+            area,
+        );
+        return;
+    }
     let (title, text, scroll) = match overlay {
         Overlay::Help { scroll } => ("help".to_owned(), keymap::help_lines().join("\n"), *scroll),
-        Overlay::Logs { .. } => ("logs".to_owned(), "no logs".to_owned(), 0),
-        Overlay::WorkspacePicker { items, .. } => (
-            "workspaces".to_owned(),
-            items
-                .iter()
-                .map(|item| format!("{}  {}", item.name, item.root_dir))
-                .collect::<Vec<_>>()
-                .join("\n"),
-            0,
-        ),
+        Overlay::Logs { .. } | Overlay::WorkspacePicker { .. } => unreachable!(),
         Overlay::Clarify { .. } => {
             let (title, text) = super::clarify::content(overlay).expect("clarification overlay");
             (title, text, 0)

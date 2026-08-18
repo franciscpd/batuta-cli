@@ -6,8 +6,11 @@ pub mod composer;
 pub mod footer;
 pub mod header;
 pub mod layout;
+pub mod logs;
 pub mod markdown;
 pub mod overlays;
+pub mod picker;
+pub mod run;
 pub mod runs;
 pub mod session;
 pub mod sessions;
@@ -77,19 +80,7 @@ fn render_detail(model: &Model, frame: &mut Frame<'_>, area: ratatui::layout::Re
     frame.render_widget(block, area);
     match &model.detail {
         Detail::Session(_) => session::render(model, frame, inner),
-        Detail::Run(detail) => {
-            let text = if detail.events.is_empty() {
-                "no run events".into()
-            } else {
-                detail
-                    .events
-                    .iter()
-                    .map(|event| format!("{} {}", event.seq, event.kind))
-                    .collect::<Vec<_>>()
-                    .join("\n")
-            };
-            frame.render_widget(Paragraph::new(text), inner)
-        }
+        Detail::Run(_) => run::render(model, frame, inner),
         Detail::Empty => frame.render_widget(
             Paragraph::new("select a session or run").style(model.theme.muted),
             inner,

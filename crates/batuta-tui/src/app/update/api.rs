@@ -1,21 +1,24 @@
 use crate::{
     app::{
-        model::{
-            Detail, Model, Panel, PendingKind, SessionDetail, StreamStatus, WorkspaceRef,
-            page_into_detail,
-        },
+        model::{Detail, Model, Panel, PendingKind, SessionDetail, StreamStatus, page_into_detail},
         panels::{attention, runs, sessions},
     },
     cmd::{Cmd, Request, RequestId, StreamId, TimerId},
     msg::{ApiResponse, ApiResult},
 };
 use compozy_client::{
-    TaskVerb,
+    RunControl, TaskVerb,
     types::{Decision, PromptOutcome},
 };
 use std::time::Duration;
 
 pub(super) fn api(model: &mut Model, id: RequestId, result: ApiResult) -> Vec<Cmd> {
+    if let Some(request) = model.late_writes.remove(&id) {
+        return match result {
+            Ok(response) => late_success(model, request, response),
+            Err(_) => Vec::new(),
+        };
+    }
     let Some(PendingKind::Request(request)) = model.pending.remove(&id) else {
         return Vec::new();
     };
@@ -113,6 +116,11 @@ fn failure(model: &mut Model, request: Request, error: String) -> Vec<Cmd> {
             model.set_sticky_toast(error);
             Vec::new()
         }
+        Request::Run { .. } if not_found(&error) => {
+            model.detail = Detail::Empty;
+            model.set_sticky_toast(clean_error(&error));
+            Vec::new()
+        }
         _ => {
             model.set_sticky_toast(error);
             Vec::new()
@@ -143,23 +151,7 @@ fn apply(model: &mut Model, request: Request, response: ApiResponse) -> Vec<Cmd>
             Vec::new()
         }
         (Request::Workspaces { .. }, ApiResponse::Workspaces(items)) => {
-            if let Some(crate::app::model::Overlay::WorkspacePicker {
-                items: target,
-                selected,
-                ..
-            }) = &mut model.overlay
-            {
-                *target = items
-                    .into_iter()
-                    .map(|item| WorkspaceRef {
-                        id: item.id,
-                        name: item.name,
-                        root_dir: item.root_dir,
-                    })
-                    .collect();
-                *selected = (!target.is_empty()).then_some(0);
-            }
-            model.dirty = true;
+            super::picker::apply(model, items);
             Vec::new()
         }
         (Request::Sessions { .. }, ApiResponse::Sessions(page)) => {
@@ -249,6 +241,10 @@ fn apply(model: &mut Model, request: Request, response: ApiResponse) -> Vec<Cmd>
             }
             Vec::new()
         }
+        (Request::Logs { scope, .. }, ApiResponse::Logs(events)) => {
+            super::logs::apply(model, &scope, events);
+            Vec::new()
+        }
         (Request::Prompt { session, .. }, ApiResponse::Prompt(outcome)) => {
             model.prompt_pending = false;
             model.failed_prompt = None;
@@ -318,8 +314,62 @@ fn apply(model: &mut Model, request: Request, response: ApiResponse) -> Vec<Cmd>
         (Request::CancelPrompt { .. }, ApiResponse::Empty) => {
             model.set_success_toast("cancel requested")
         }
+        (
+            Request::RunControl {
+                workspace,
+                run,
+                control,
+                ..
+            },
+            ApiResponse::RunMutation(_),
+        ) => {
+            let text = match control {
+                RunControl::Pause => "paused",
+                RunControl::Resume => "resumed",
+                RunControl::Kill | RunControl::Cancel => "kill requested",
+            };
+            let mut commands = model.set_success_toast(text);
+            commands.extend(refetch_run(model, &workspace, &run));
+            commands
+        }
+        (Request::RunApprove { workspace, run, .. }, ApiResponse::Empty) => {
+            let mut commands = model.set_success_toast("approved");
+            commands.extend(refetch_run(model, &workspace, &run));
+            commands
+        }
         (_, _) => Vec::new(),
     }
+}
+
+fn late_success(model: &mut Model, request: Request, response: ApiResponse) -> Vec<Cmd> {
+    let text = match (request, response) {
+        (
+            Request::RunControl {
+                control: RunControl::Pause,
+                ..
+            },
+            ApiResponse::RunMutation(_),
+        ) => Some("paused"),
+        (
+            Request::RunControl {
+                control: RunControl::Resume,
+                ..
+            },
+            ApiResponse::RunMutation(_),
+        ) => Some("resumed"),
+        (
+            Request::RunControl {
+                control: RunControl::Kill | RunControl::Cancel,
+                ..
+            },
+            ApiResponse::RunMutation(_),
+        ) => Some("kill requested"),
+        (Request::RunApprove { .. }, ApiResponse::Empty) => Some("approved"),
+        (Request::CancelPrompt { .. }, ApiResponse::Empty) => Some("cancel requested"),
+        (Request::Prompt { .. }, ApiResponse::Prompt(_)) => Some("sent"),
+        _ => None,
+    };
+    text.map_or_else(Vec::new, |text| model.set_success_toast(text))
 }
 
 fn clean_error(error: &str) -> String {

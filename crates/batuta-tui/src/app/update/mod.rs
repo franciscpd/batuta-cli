@@ -2,8 +2,11 @@ mod api;
 mod attention;
 mod clarify;
 mod composer;
+mod detail_run;
 mod detail_session;
 mod keys;
+mod logs;
+mod picker;
 mod prompt;
 mod runs;
 mod sessions;
@@ -18,6 +21,16 @@ pub fn update(model: &mut Model, msg: Msg) -> Vec<Cmd> {
         Msg::Mouse(_) => Vec::new(),
         Msg::Resize(width, height) => {
             model.size = (width, height);
+            let closing_logs = if model.too_small() {
+                match &model.overlay {
+                    Some(crate::app::Overlay::Logs { scope, .. }) => {
+                        Some(crate::cmd::StreamId::Logs(scope.clone()))
+                    }
+                    _ => None,
+                }
+            } else {
+                None
+            };
             if model.too_small() {
                 model.overlay = None;
             }
@@ -26,7 +39,13 @@ pub fn update(model: &mut Model, msg: Msg) -> Vec<Cmd> {
                 detail.view.cache_dirty = true;
             }
             model.dirty = true;
-            Vec::new()
+            closing_logs
+                .into_iter()
+                .map(|stream| {
+                    model.active_streams.remove(&stream);
+                    Cmd::StopStream(stream)
+                })
+                .collect()
         }
         Msg::Tick => {
             if model.dirty {

@@ -60,6 +60,9 @@ pub(super) fn key(model: &mut Model, key: KeyEvent) -> Vec<Cmd> {
     if key.code == KeyCode::Char('q') {
         return guarded_quit(model);
     }
+    if key.code == KeyCode::Char('L') {
+        return super::logs::open(model);
+    }
     if model.mode == crate::app::model::AppMode::TailOnly {
         return detail_key(model, key);
     }
@@ -85,16 +88,7 @@ pub(super) fn key(model: &mut Model, key: KeyEvent) -> Vec<Cmd> {
             };
             focus_changed(model)
         }
-        KeyCode::Char('w') => {
-            model.overlay = Some(Overlay::WorkspacePicker {
-                selected: None,
-                items: Vec::new(),
-                at_start: false,
-            });
-            let request = model.allocate(|id| Request::Workspaces { id });
-            model.dirty = true;
-            vec![Cmd::Get(request)]
-        }
+        KeyCode::Char('w') => super::picker::open(model, false),
         _ => match model.focus {
             Panel::Sessions | Panel::Runs | Panel::Attention => list_key(model, key),
             Panel::Detail => detail_key(model, key),
@@ -191,6 +185,10 @@ pub(super) fn open_session_id(model: &mut Model, id: String) -> Vec<Cmd> {
         Detail::Session(detail) => Some(detail.session.id.clone()),
         _ => None,
     };
+    let old_run = match &model.detail {
+        Detail::Run(detail) => Some(detail.run_id.clone()),
+        _ => None,
+    };
     let session = compozy_client::types::Session {
         id: id.clone(),
         agent_name: row
@@ -227,6 +225,12 @@ pub(super) fn open_session_id(model: &mut Model, id: String) -> Vec<Cmd> {
             .remove(&StreamId::Transcript(old.clone()));
         commands.push(Cmd::StopStream(StreamId::Transcript(old)));
     }
+    if let Some(old) = old_run {
+        model
+            .active_streams
+            .remove(&StreamId::RunEvents(old.clone()));
+        commands.push(Cmd::StopStream(StreamId::RunEvents(old)));
+    }
     model
         .active_streams
         .insert(StreamId::Transcript(id.clone()));
@@ -250,6 +254,14 @@ pub(super) fn open_run_id(model: &mut Model, id: String) -> Vec<Cmd> {
     let Some(workspace) = model.workspace.clone() else {
         return Vec::new();
     };
+    let old_transcript = match &model.detail {
+        Detail::Session(detail) => Some(detail.session.id.clone()),
+        _ => None,
+    };
+    let old_run = match &model.detail {
+        Detail::Run(detail) if detail.run_id != id => Some(detail.run_id.clone()),
+        _ => None,
+    };
     model.detail = Detail::Run(Box::new(crate::app::model::RunDetail {
         run: None,
         run_id: id.clone(),
@@ -265,10 +277,27 @@ pub(super) fn open_run_id(model: &mut Model, id: String) -> Vec<Cmd> {
         run: id.clone(),
     });
     model.dirty = true;
-    vec![Cmd::Get(request), Cmd::StartStream(StreamId::RunEvents(id))]
+    let mut commands = Vec::new();
+    if let Some(old) = old_transcript {
+        model
+            .active_streams
+            .remove(&StreamId::Transcript(old.clone()));
+        commands.push(Cmd::StopStream(StreamId::Transcript(old)));
+    }
+    if let Some(old) = old_run {
+        model
+            .active_streams
+            .remove(&StreamId::RunEvents(old.clone()));
+        commands.push(Cmd::StopStream(StreamId::RunEvents(old)));
+    }
+    commands.extend([Cmd::Get(request), Cmd::StartStream(StreamId::RunEvents(id))]);
+    commands
 }
 
 fn detail_key(model: &mut Model, key: KeyEvent) -> Vec<Cmd> {
+    if matches!(model.detail, Detail::Run(_)) {
+        return super::detail_run::key(model, key);
+    }
     if let Some(commands) = super::attention::inline_key(model, key) {
         return commands;
     }
@@ -407,6 +436,12 @@ fn overlay_key(model: &mut Model, key: KeyEvent) -> Vec<Cmd> {
     if matches!(model.overlay, Some(Overlay::Clarify { .. })) {
         return super::clarify::key(model, key);
     }
+    if matches!(model.overlay, Some(Overlay::Logs { .. })) {
+        return super::logs::key(model, key);
+    }
+    if matches!(model.overlay, Some(Overlay::WorkspacePicker { .. })) {
+        return super::picker::key(model, key);
+    }
     match &mut model.overlay {
         Some(Overlay::Help { scroll }) => match key.code {
             KeyCode::Esc | KeyCode::Char('?') => model.overlay = None,
@@ -414,15 +449,6 @@ fn overlay_key(model: &mut Model, key: KeyEvent) -> Vec<Cmd> {
             KeyCode::Char('k') | KeyCode::Up => *scroll = scroll.saturating_sub(1),
             _ => return Vec::new(),
         },
-        Some(Overlay::Logs { .. }) if matches!(key.code, KeyCode::Esc | KeyCode::Char('L')) => {
-            model.overlay = None
-        }
-        Some(Overlay::WorkspacePicker { at_start, .. }) if key.code == KeyCode::Esc => {
-            if *at_start {
-                return quit(model);
-            }
-            model.overlay = None
-        }
         Some(Overlay::Clarify { .. }) => return Vec::new(),
         _ => return Vec::new(),
     }
@@ -482,6 +508,9 @@ fn chooser_key(model: &mut Model, key: KeyEvent) -> Vec<Cmd> {
             }
             _ => Vec::new(),
         };
+    }
+    if matches!(model.detail, Detail::Run(ref detail) if detail.confirm.is_some()) {
+        return super::detail_run::confirm(model, key.code);
     }
     if key.code == KeyCode::Esc {
         if let Some(detail) = model.session_detail_mut() {
