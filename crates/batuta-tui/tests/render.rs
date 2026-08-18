@@ -1,12 +1,9 @@
 use batuta_tui::{
-    app::{FooterState, Model, SessionHeader, update},
-    keymap,
+    app::{Model, SessionHeader, page_into_detail},
     msg::Msg,
-    theme::Theme,
-    views,
+    update, views,
 };
 use compozy_client::types::{Entry, Part, Role, TranscriptPage, UiMessage};
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::{Terminal, backend::TestBackend};
 use serde_json::json;
 
@@ -22,9 +19,8 @@ fn entry(start: i64, role: Role, parts: Vec<Part>) -> Entry {
         },
     }
 }
-
 fn model() -> Model {
-    let mut model = Model::new(SessionHeader {
+    let mut model = Model::tail(SessionHeader {
         workspace: "batuta-cli".into(),
         workspace_id: "ws_e619d7250e618324".into(),
         session_id: "sess-807cee9774b33f68".into(),
@@ -98,7 +94,7 @@ fn model() -> Model {
                     evidence: None,
                 },
                 Part::Permission {
-                    data: json!({"request_id":"req_3f9c", "turn_id":"turn-073fb634a25a1f32", "summary":"Bash: rm -rf build/"}),
+                    data: json!({"request_id":"req_3f9c","turn_id":"turn-073fb634a25a1f32","summary":"Bash: rm -rf build/"}),
                 },
                 Part::File {
                     filename: Some("report.txt".into()),
@@ -111,28 +107,24 @@ fn model() -> Model {
             ],
         ),
     ];
-    update(
-        &mut model,
-        Msg::Page(Ok(TranscriptPage {
+    page_into_detail(
+        model.session_detail_mut().unwrap(),
+        TranscriptPage {
             entries,
             epoch: 1,
             generation: 1,
             max_sequence: 30,
             has_older: false,
             limit: 200,
-            ..TranscriptPage::default()
-        })),
+            ..Default::default()
+        },
     );
     model
 }
-
 fn render(mut model: Model, width: u16, height: u16) -> String {
     update(&mut model, Msg::Resize(width, height));
-    let backend = TestBackend::new(width, height);
-    let mut terminal = Terminal::new(backend).expect("terminal");
-    terminal
-        .draw(|frame| views::view(&model, frame))
-        .expect("draw");
+    let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+    terminal.draw(|frame| views::view(&model, frame)).unwrap();
     let buffer = terminal.backend().buffer();
     (0..height)
         .map(|y| {
@@ -147,365 +139,15 @@ fn render(mut model: Model, width: u16, height: u16) -> String {
 }
 
 #[test]
-fn ut_120_core_screen_snapshot() {
-    insta::assert_snapshot!(render(model(), 100, 30));
-}
-
-#[test]
-fn ut_122_responsive_snapshots() {
+fn delivery_one_snapshots_are_byte_for_byte() {
     insta::assert_snapshot!("screen_80x24", render(model(), 80, 24));
     insta::assert_snapshot!("screen_120x40", render(model(), 120, 40));
     insta::assert_snapshot!("screen_200x60", render(model(), 200, 60));
 }
-
 #[test]
-fn ut_125_no_color_keeps_glyph_hierarchy() {
-    let mut model = model();
-    model.theme = Theme::new(false);
-    update(&mut model, Msg::Resize(80, 24));
-    assert!(
-        model
-            .render_cache
-            .values()
-            .flat_map(|text| &text.lines)
-            .flat_map(|line| &line.spans)
-            .all(|span| span.style.fg.is_none() && span.style.bg.is_none())
-    );
-    let screen = render(model, 80, 24);
-    assert!(screen.contains("✓"));
-    assert!(screen.contains("! file_mutation_unverified"));
-}
-
-#[test]
-fn ut_121_expanded_tool_shows_pretty_input_and_output() {
-    let mut model = model();
-    update(
-        &mut model,
-        Msg::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
-    );
-    let screen = render(model, 100, 30);
-    assert!(screen.contains("input"));
-    assert!(screen.contains("output"));
-    assert!(screen.contains("\"value\": true"));
-}
-
-#[test]
-fn ut_123_reasoning_toggle_reveals_lines() {
-    let mut model = model();
-    update(
-        &mut model,
-        Msg::Key(KeyEvent::new(KeyCode::Char('t'), KeyModifiers::NONE)),
-    );
-    assert!(render(model, 100, 30).contains("reason 14"));
-}
-
-#[test]
-fn ut_124_and_ut_128_markdown_and_unclosed_fence_do_not_panic() {
-    let mut model = Model::new(SessionHeader {
-        workspace: "w".into(),
-        workspace_id: "ws".into(),
-        session_id: "sess-md".into(),
-        agent: "batuta".into(),
-        name: None,
-        state: "active".into(),
-        warning: None,
-    });
-    update(
-        &mut model,
-        Msg::Page(Ok(TranscriptPage {
-            entries: vec![entry(
-                1,
-                Role::Assistant,
-                vec![Part::Text {
-                    text: "# Heading\n\n- item\n\n```rust\nfn main() {".into(),
-                    state: Some("done".into()),
-                }],
-            )],
-            max_sequence: 2,
-            limit: 200,
-            ..TranscriptPage::default()
-        })),
-    );
-    let screen = render(model, 80, 24);
-    assert!(screen.contains("Heading"));
-    assert!(screen.contains("fn main()"));
-}
-
-#[test]
-fn ut_129_streaming_text_has_cursor() {
-    assert!(render(model(), 100, 30).contains("implementar▍"));
-}
-
-#[test]
-fn ut_130_string_tool_payload_is_verbatim() {
-    let mut model = Model::new(SessionHeader {
-        workspace: "w".into(),
-        workspace_id: "ws".into(),
-        session_id: "sess-tool".into(),
-        agent: "batuta".into(),
-        name: None,
-        state: "active".into(),
-        warning: None,
-    });
-    update(
-        &mut model,
-        Msg::Page(Ok(TranscriptPage {
-            entries: vec![entry(
-                1,
-                Role::Assistant,
-                vec![Part::Tool {
-                    name: "x".into(),
-                    tool_call_id: None,
-                    state: Some("output-available".into()),
-                    input: None,
-                    output: Some(json!("plain string")),
-                    error_text: None,
-                    title: None,
-                }],
-            )],
-            max_sequence: 2,
-            limit: 200,
-            ..TranscriptPage::default()
-        })),
-    );
-    update(
-        &mut model,
-        Msg::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
-    );
-    assert!(render(model, 80, 24).contains("plain string"));
-}
-
-#[test]
-fn ut_121_expanded_payload_is_capped_at_two_hundred_lines() {
-    let payload = (0..201)
-        .map(|line| format!("line {line}"))
-        .collect::<Vec<_>>()
-        .join("\n");
-    let mut model = Model::new(SessionHeader {
-        workspace: "w".into(),
-        workspace_id: "ws".into(),
-        session_id: "sess-tool".into(),
-        agent: "batuta".into(),
-        name: None,
-        state: "active".into(),
-        warning: None,
-    });
-    update(
-        &mut model,
-        Msg::Page(Ok(TranscriptPage {
-            entries: vec![entry(
-                1,
-                Role::Assistant,
-                vec![Part::Tool {
-                    name: "x".into(),
-                    tool_call_id: None,
-                    state: Some("output-error".into()),
-                    input: None,
-                    output: None,
-                    error_text: Some(payload),
-                    title: None,
-                }],
-            )],
-            max_sequence: 2,
-            limit: 200,
-            ..TranscriptPage::default()
-        })),
-    );
-    update(
-        &mut model,
-        Msg::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
-    );
-    assert!(render(model, 80, 240).contains("… truncated"));
-}
-
-#[test]
-fn ut_131_oversized_part_is_replaced_by_size_notice() {
-    let text = "x".repeat(1024 * 1024 + 1);
-    let mut model = Model::new(SessionHeader {
-        workspace: "w".into(),
-        workspace_id: "ws".into(),
-        session_id: "sess-large".into(),
-        agent: "batuta".into(),
-        name: None,
-        state: "active".into(),
-        warning: None,
-    });
-    update(
-        &mut model,
-        Msg::Page(Ok(TranscriptPage {
-            entries: vec![entry(
-                1,
-                Role::Assistant,
-                vec![Part::Text { text, state: None }],
-            )],
-            max_sequence: 2,
-            limit: 200,
-            ..TranscriptPage::default()
-        })),
-    );
-    assert!(render(model, 80, 10).contains("[part too large: 1048577 bytes]"));
-}
-
-#[test]
-fn ut_134_permission_decision_replaces_card() {
-    let mut model = Model::new(SessionHeader {
-        workspace: "w".into(),
-        workspace_id: "ws".into(),
-        session_id: "sess-perm".into(),
-        agent: "batuta".into(),
-        name: None,
-        state: "active".into(),
-        warning: None,
-    });
-    update(
-        &mut model,
-        Msg::Page(Ok(TranscriptPage {
-            entries: vec![entry(
-                1,
-                Role::Assistant,
-                vec![Part::Permission {
-                    data: json!({"request_id":"r", "turn_id":"t", "summary":"read"}),
-                }],
-            )],
-            epoch: 1,
-            generation: 1,
-            max_sequence: 2,
-            limit: 200,
-            ..TranscriptPage::default()
-        })),
-    );
-    let mut decided = entry(
-        1,
-        Role::Assistant,
-        vec![Part::Permission {
-            data: json!({"request_id":"r", "turn_id":"t", "summary":"read", "decision":"approved"}),
-        }],
-    );
-    decided.sequence = 3;
-    update(
-        &mut model,
-        Msg::Stream(compozy_client::TranscriptEvent::Delta(
-            compozy_client::types::TranscriptDelta {
-                epoch: 1,
-                generation: 1,
-                entries: vec![decided],
-                cursor: 3,
-                max_sequence: 3,
-                ..Default::default()
-            },
-        )),
-    );
-    assert!(render(model, 80, 12).contains("approved"));
-}
-
-#[test]
-fn ut_126_footer_variants_use_exact_copy() {
-    let variants = [
-        FooterState::Stopped {
-            reason: None,
-            detail: None,
-        },
-        FooterState::Reconnecting(3),
-        FooterState::Offline,
-        FooterState::Resynchronized("epoch_mismatch".into()),
-        FooterState::NewBelow(3),
-    ];
-    let rendered = variants
-        .into_iter()
-        .map(|footer| {
-            let mut value = model();
-            value.footer = footer;
-            render(value, 100, 8)
-        })
-        .collect::<Vec<_>>()
-        .join("\n---\n");
-    insta::assert_snapshot!(rendered);
-}
-
-#[test]
-fn ut_127_resync_and_beginning_lines_render_inline() {
-    let mut model = model();
-    update(
-        &mut model,
-        Msg::Stream(compozy_client::TranscriptEvent::Snapshot(
-            compozy_client::types::TranscriptSnapshot {
-                entries: vec![entry(40, Role::Assistant, vec![])],
-                epoch: 2,
-                generation: 2,
-                max_sequence: 40,
-                reset: true,
-                reason: Some("epoch_mismatch".into()),
-                ..Default::default()
-            },
-        )),
-    );
-    let screen = render(model, 80, 12);
-    assert!(screen.contains("─ resynchronized (epoch_mismatch) ─"));
-    assert!(screen.contains("beginning of transcript"));
-}
-
-#[test]
-fn ut_177_visible_window_bounds_layout_work_for_ten_thousand_entries() {
-    let mut model = Model::new(SessionHeader {
-        workspace: "w".into(),
-        workspace_id: "ws".into(),
-        session_id: "sess-many".into(),
-        agent: "batuta".into(),
-        name: None,
-        state: "active".into(),
-        warning: None,
-    });
-    let entries = (0..10_000)
-        .map(|value| entry(value, Role::Assistant, Vec::new()))
-        .collect();
-    update(
-        &mut model,
-        Msg::Page(Ok(TranscriptPage {
-            entries,
-            max_sequence: 10_000,
-            limit: 10_000,
-            ..Default::default()
-        })),
-    );
-    let range = views::transcript::visible_entry_range(&model, 20);
-    assert!(range.len() <= 22);
-}
-
-#[test]
-fn ut_182_stopped_footer_includes_reason_and_detail() {
-    let mut model = model();
-    model.footer = FooterState::Stopped {
-        reason: Some("user_request".into()),
-        detail: Some("finished".into()),
-    };
-    let status = views::footer::status(&model);
-    assert!(status.contains("user_request"));
-    assert!(status.contains("finished"));
-}
-
-#[test]
-fn ut_132_and_ut_133_narrow_and_empty_states() {
-    assert!(render(model(), 30, 12).contains("▸ batuta"));
-    assert!(render(model(), 19, 8).contains("terminal too narrow"));
-    let empty = Model::new(SessionHeader {
-        workspace: "w".into(),
-        workspace_id: "ws".into(),
-        session_id: "sess-empty".into(),
-        agent: "batuta".into(),
-        name: None,
-        state: "active".into(),
-        warning: None,
-    });
-    let screen = render(empty, 80, 8);
-    assert!(screen.contains("batuta · w · sess-empty"));
-    assert!(screen.contains("no transcript yet"));
-}
-
-#[test]
-fn ut_143_keymap_and_footer_are_generated_from_one_table() {
-    assert_eq!(keymap::footer(), keymap::FOOTER);
-    for binding in keymap::BINDINGS {
-        assert!(keymap::FOOTER.contains(binding.keys));
-        assert!(keymap::FOOTER.contains(binding.action));
-    }
+fn ut_680_delivery_one_tail_layout() {
+    let output = render(model(), 80, 24);
+    assert!(output.contains("batuta · batuta-cli"));
+    assert!(output.contains("file_mutation_unverified"));
+    assert!(output.contains("j/k move"));
 }

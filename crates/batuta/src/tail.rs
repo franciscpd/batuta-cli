@@ -68,7 +68,10 @@ async fn run_terminal(
     session: Session,
     warning: Option<String>,
 ) -> Result<(), AppError> {
-    let mut model = Model::new(SessionHeader {
+    let stopped = session.state == "stopped";
+    let stop_reason = session.stop_reason.clone();
+    let stop_detail = session.stop_detail.clone();
+    let mut model = Model::tail(SessionHeader {
         workspace: workspace.name,
         workspace_id: workspace.id,
         session_id: session.id,
@@ -77,10 +80,10 @@ async fn run_terminal(
         state: session.state.clone(),
         warning,
     });
-    if session.state == "stopped" {
-        model.footer = FooterState::Stopped {
-            reason: session.stop_reason,
-            detail: session.stop_detail,
+    if stopped && let Some(detail) = model.session_detail_mut() {
+        detail.view.footer = FooterState::Stopped {
+            reason: stop_reason,
+            detail: stop_detail,
         };
     }
     let mut terminal = ratatui::init();

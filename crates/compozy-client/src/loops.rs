@@ -46,17 +46,19 @@ impl Client {
         workspace: &str,
         query: &LoopRunQuery<'_>,
     ) -> Result<LoopRunPage, Error> {
-        let mut serializer = Serializer::new(String::new());
-        if let Some(loop_name) = query.loop_ {
-            serializer.append_pair("loop", loop_name);
-        }
-        if let Some(status) = query.status {
-            serializer.append_pair("status", status);
-        }
-        if query.limit > 0 {
-            serializer.append_pair("limit", &query.limit.to_string());
-        }
-        let query = serializer.finish();
+        let query = {
+            let mut serializer = Serializer::new(String::new());
+            if let Some(loop_name) = query.loop_ {
+                serializer.append_pair("loop", loop_name);
+            }
+            if let Some(status) = query.status {
+                serializer.append_pair("status", status);
+            }
+            if query.limit > 0 {
+                serializer.append_pair("limit", &query.limit.to_string());
+            }
+            serializer.finish()
+        };
         let mut path = format!("/api/workspaces/{}/loop-runs", encode_segment(workspace));
         if !query.is_empty() {
             path.push('?');

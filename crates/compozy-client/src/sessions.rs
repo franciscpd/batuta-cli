@@ -42,16 +42,19 @@ impl Client {
     }
 
     pub async fn sessions(&self, query: &SessionQuery<'_>) -> Result<SessionPage, Error> {
-        let mut serializer = Serializer::new(String::new());
-        serializer
-            .append_pair("workspace", query.workspace)
-            .append_pair("type", query.type_)
-            .append_pair("sort", query.sort)
-            .append_pair("limit", &query.limit.to_string());
-        if let Some(agent) = query.agent {
-            serializer.append_pair("agent", agent);
-        }
-        let path = format!("/api/sessions?{}", serializer.finish());
+        let encoded = {
+            let mut serializer = Serializer::new(String::new());
+            serializer
+                .append_pair("workspace", query.workspace)
+                .append_pair("type", query.type_)
+                .append_pair("sort", query.sort)
+                .append_pair("limit", &query.limit.to_string());
+            if let Some(agent) = query.agent {
+                serializer.append_pair("agent", agent);
+            }
+            serializer.finish()
+        };
+        let path = format!("/api/sessions?{encoded}");
         self.get_json(&path, "sessions response", RouteKind::Scoped)
             .await
     }

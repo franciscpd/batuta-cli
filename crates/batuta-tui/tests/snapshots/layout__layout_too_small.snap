@@ -1,0 +1,6 @@
+---
+source: crates/batuta-tui/tests/layout.rs
+expression: "render(&model,width,height)"
+---
+                 batuta needs at least 80×24 (now 72×20)
+                      resize the terminal — q quits
