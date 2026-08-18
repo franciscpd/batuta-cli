@@ -35,7 +35,7 @@ starts request a page refetch rather than guessing.
 
 Evidence: UT-040–UT-055 in `crates/compozy-client/tests/sse.rs` and
 `crates/batuta-tui/src/transcript.rs`; the `TranscriptState` tests in
-`crates/batuta-tui/tests/app.rs`; snapshots under
+`crates/batuta-tui/tests/state.rs`; snapshots under
 `crates/batuta-tui/tests/snapshots/`; task 04 records 18/18 SSE tests and a
 live `reset:true` response for an epoch/generation mismatch; task 07 records
 the live `resynchronized (fence_missing)` marker.
@@ -52,7 +52,7 @@ The terminal rendering is readable at the supported sizes and remains useful
 during streaming, but the first MVP should retain truncation, collapsed cards,
 and the narrow-terminal guard.
 
-Evidence: UT-120–UT-134 in `crates/batuta-tui/tests/views.rs`; snapshots
+Evidence: UT-120–UT-134 in `crates/batuta-tui/tests/render.rs`; snapshots
 `crates/batuta-tui/tests/snapshots/render__screen_80x24.snap`,
 `render__screen_120x40.snap`, `render__screen_200x60.snap`,
 `render__ut_126_footer_variants_use_exact_copy.snap`, plus marker, permission,

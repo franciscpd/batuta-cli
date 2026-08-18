@@ -47,8 +47,11 @@ Verified against `compozy/compozy` at commit `a35eda6d` (daemon
   are SSE comments, and `done` is not emitted in transcript mode; reconnect
   with `Last-Event-ID`/`after_sequence` plus `epoch` and `generation`; a fence
   mismatch returns a snapshot with `reset:true`),
-  `GET /api/sessions/catalog-stream`, `GET /api/logs/stream` (cursor
-  `RFC3339Nano|sequence`), `GET /api/workspaces/{ws}/loop-runs/{id}/events`.
+  `GET /api/sessions/catalog-stream` (no `Last-Event-ID`; emits
+  `session_catalog_changed {kind, workspace_id, session_id}` as a refetch
+  signal), `GET /api/logs/stream` (cursor `RFC3339Nano|seq`, scoped by
+  `workspace_id`), `GET /api/workspaces/{ws}/loop-runs/{id}/events`
+  (`Last-Event-ID` is the event `seq`).
 - Transcript entries are Vercel AI SDK `UIMessage` values: `{message:{id,
   role, parts[]}, start_sequence, sequence}` with part types `text`,
   `reasoning`, `tool-<toolName>` or `dynamic-tool` (`state` in `input-streaming |
@@ -57,15 +60,19 @@ Verified against `compozy/compozy` at commit `a35eda6d` (daemon
   vocabulary (`prompt_queued`, `provider_failure`,
   `file_mutation_unverified`, ...).
 - Approvals (`POST .../sessions/{id}/approve {request_id, turn_id,
-  decision}`) and clarifications (`GET .../clarifications`,
+  decision}`) use `allow-once | allow-always | reject-once | reject-always`,
+  and clarifications (`GET .../clarifications`,
   `POST .../clarifications/{id}/answer {choice_index|text}`) block the
   agent until answered.
 - Busy sessions accept `mode=queue|steer|interrupt`; `interrupt`/`steer`
   require `expected_turn_id`. Every prompt carries `message_id` and
   `idempotency_key`; a `409` means an indeterminate dispatch and must not
   be retried blindly.
-- `GET /api/observe/overview` returns `attention` items whose verbs are
-  the only ones the daemon accepts (`approve`, `reject`, `retry`, `open`).
+- The Attention panel combines three sources per ADR-001: session
+  permissions, clarifications, and `observe/overview` task-level items.
+  Overview items expose the daemon verbs `approve`, `reject`, `retry`, and
+  `open`; session permissions and clarifications retain their own answer
+  verbs.
 - There is no official TUI. `bubbletea` in `go.mod` only backs the install
   wizard; `compozy session resume` prints a one-shot bundle, it is not a
   REPL. Closing a viewer never cancels an accepted prompt; a TUI quit must
@@ -104,9 +111,11 @@ Panels:
 - **[2] Deliver runs** — loop runs of the workspace, default filter
   `loop=batuta-deliver`; `*` toggles all loops. State shown with a symbol
   and a color, never color alone.
-- **[3] Attention** — `observe/overview.attention` items plus pending
-  clarifications of visible sessions. Verbs are exactly the daemon's:
-  `a` approve, `x` reject, `r` retry, `Enter` open.
+- **[3] Attention** — the three sources defined by ADR-001: session
+  permissions, clarifications of visible sessions, and task-level
+  `observe/overview.attention` items. Overview items use `approve`, `reject`,
+  `retry`, and `open`; permission and clarification items use their source's
+  answer verbs.
 - **[4] Detail** — follows focus. Session: transcript + composer. Run:
   node timeline from the events stream with `p` pause, `u` resume,
   `k` kill, `a` approve. Attention item: the item in context.
@@ -194,12 +203,12 @@ shadow lists; a stream either signals "refetch" or delivers fenced deltas.
 
 | Panel | Initial read | Live | Update rule |
 |---|---|---|---|
-| Sessions | `GET /api/sessions?workspace_id&type=user&sort=last_activity` | SSE `/api/sessions/catalog-stream` | each wake refetches the page of the workspace named in the event |
+| Sessions | `GET /api/sessions?workspace_id&type=user&sort=last_activity` | SSE `/api/sessions/catalog-stream` (no `Last-Event-ID`; `session_catalog_changed {kind, workspace_id, session_id}`) | each event is a refetch signal for the page of the workspace named in the event |
 | Deliver runs | `GET /api/workspaces/{ws}/loop-runs` (filter by loop name server-side if the route supports it, otherwise client-side) | poll every 5 s while a non-terminal run is listed; otherwise on focus or manual refresh | terminal state stops the poll |
 | Attention | `GET /api/observe/overview?workspace=` (`attention`) + `GET .../sessions/{id}/clarifications` for visible sessions | catalog-stream wakes; transcript deltas carrying `data-compozy-permission` | any verb executed triggers an overview refetch |
 | Detail: session | `GET .../sessions/{id}/transcript` (newest page; scroll up uses `before_sequence` while `has_older`) | SSE `.../sessions/{id}/stream?frames=transcript&epoch&generation&after_sequence` | `transcript_snapshot` with `reset:true` replaces state; `transcript_delta` applies by `start_sequence`/`sequence`; `session_stopped` closes the stream |
-| Detail: run | `GET .../loop-runs/{id}` (+ `/turns` on demand) | SSE `.../loop-runs/{id}/events` with `Last-Event-ID` | append to the timeline; a terminal outcome closes the stream |
-| Logs overlay | `GET /api/logs?...` | SSE `/api/logs/stream` with the composite cursor | filters (`session`, `run`, `error-only`) come from the focused item |
+| Detail: run | `GET .../loop-runs/{id}` (+ `/turns` on demand) | SSE `.../loop-runs/{id}/events` with `Last-Event-ID` = `seq` | append to the timeline; a terminal outcome closes the stream |
+| Logs overlay | `GET /api/logs?workspace_id=...` | SSE `/api/logs/stream` with the `RFC3339Nano|seq` cursor | filters (`session`, `run`, `error-only`) come from the focused item |
 | Header | `GET /api/status` at boot and every 30 s | — | shows `daemon.status` and version; an unsupported version warns, never blocks |
 
 Writes, each followed by a structured read of the affected resource:
@@ -210,9 +219,12 @@ Writes, each followed by a structured read of the affected resource:
   transcript stream already carries the turn.
 - New session: `POST /api/sessions` with the preset agent in the active
   workspace; the first prompt selects the preset provider/model.
-- Approve: `POST .../sessions/{id}/approve`; clarify:
-  `POST .../clarifications/{id}/answer`; loop run:
-  `POST .../loop-runs/{id}/{approve,pause,resume,kill}`.
+- Approve: `POST .../sessions/{id}/approve` with one of
+  `allow-once | allow-always | reject-once | reject-always`; clarify:
+  `POST .../clarifications/{id}/answer`; loop run controls:
+  `POST .../loop-runs/{id}/{pause,resume,kill} {}` and gate approve
+  `POST .../loop-runs/{id}/approve {gate_id, decision}` with
+  `approve | request_changes | reject`.
 
 Transport: UDS at `$COMPOZY_HOME/daemon.sock` (default `~/.compozy`), TCP
 `localhost:2123` as fallback or by flag. SSE parsed with
