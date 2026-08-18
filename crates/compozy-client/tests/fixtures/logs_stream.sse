@@ -1,0 +1,30 @@
+id: 2026-08-18T11:18:20.887828755Z|00000000000000053430
+event: usage
+data: {"id":"sum-3584bffec2c99f87","session_id":"sess_72b0a4ad5697122e423773890a03a0bf","workspace_id":"ws_e619d7250e618324","type":"usage","agent_name":"code_implementer","provider":"codex","component":"session","outcome":"info","root_session_id":"sess_72b0a4ad5697122e423773890a03a0bf","spawn_depth":0,"summary":"[redacted]","timestamp":"2026-08-18T11:18:20.887828755Z"}
+
+id: 2026-08-18T11:18:22.393523862Z|00000000000000053431
+event: tool_call
+data: {"id":"sum-f2f7a2ec54376ad7","session_id":"sess_72b0a4ad5697122e423773890a03a0bf","workspace_id":"ws_e619d7250e618324","type":"tool_call","agent_name":"code_implementer","provider":"codex","component":"session","outcome":"info","root_session_id":"sess_72b0a4ad5697122e423773890a03a0bf","spawn_depth":0,"summary":"[redacted]","timestamp":"2026-08-18T11:18:22.393523862Z"}
+
+id: 2026-08-18T11:18:22.400516664Z|00000000000000053432
+event: tool_result
+data: {"id":"sum-c8ff9630e93ee41d","session_id":"sess_72b0a4ad5697122e423773890a03a0bf","workspace_id":"ws_e619d7250e618324","type":"tool_result","agent_name":"code_implementer","provider":"codex","component":"session","outcome":"info","root_session_id":"sess_72b0a4ad5697122e423773890a03a0bf","spawn_depth":0,"summary":"[redacted]","timestamp":"2026-08-18T11:18:22.400516664Z"}
+
+id: 2026-08-18T11:18:23.953362463Z|00000000000000053433
+event: thought
+data: {"id":"sum-223bdc7304de2d29","session_id":"sess_72b0a4ad5697122e423773890a03a0bf","workspace_id":"ws_e619d7250e618324","type":"thought","agent_name":"code_implementer","provider":"codex","component":"session","outcome":"info","root_session_id":"sess_72b0a4ad5697122e423773890a03a0bf","spawn_depth":0,"summary":"[redacted]","timestamp":"2026-08-18T11:18:23.953362463Z"}
+
+id: 2026-08-18T11:18:23.961755501Z|00000000000000053434
+event: thought
+data: {"id":"sum-a53e3b178d6b5a05","session_id":"sess_72b0a4ad5697122e423773890a03a0bf","workspace_id":"ws_e619d7250e618324","type":"thought","agent_name":"code_implementer","provider":"codex","component":"session","outcome":"info","root_session_id":"sess_72b0a4ad5697122e423773890a03a0bf","spawn_depth":0,"summary":"[redacted]","timestamp":"2026-08-18T11:18:23.961755501Z"}
+
+id: 2026-08-18T11:18:28.261553034Z|00000000000000053435
+event: agent_message
+data: {"id":"sum-250842bf355b7f8b","session_id":"sess_72b0a4ad5697122e423773890a03a0bf","workspace_id":"ws_e619d7250e618324","type":"agent_message","agent_name":"code_implementer","provider":"codex","component":"session","outcome":"info","root_session_id":"sess_72b0a4ad5697122e423773890a03a0bf","spawn_depth":0,"summary":"[redacted]","timestamp":"2026-08-18T11:18:28.261553034Z"}
+
+id: 2026-08-18T11:18:28.419622309Z|00000000000000053436
+event: usage
+data: {"id":"sum-18f6622f200b1c79","session_id":"sess_72b0a4ad5697122e423773890a03a0bf","workspace_id":"ws_e619d7250e618324","type":"usage","agent_name":"code_implementer","provider":"codex","component":"session","outcome":"info","root_session_id":"sess_72b0a4ad5697122e423773890a03a0bf","spawn_depth":0,"summary":"[redacted]","timestamp":"2026-08-18T11:18:28.419622309Z"}
+
+id: 2026-08-18T11:18:30.613507313Z|00000000000000053437
+event: thought

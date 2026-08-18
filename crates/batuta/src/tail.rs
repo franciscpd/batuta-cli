@@ -1,10 +1,4 @@
-use crate::{
-    cli::Cli,
-    exit::AppError,
-    probe,
-    terminal::{RatatuiOps, TerminalGuard},
-    version, workspace,
-};
+use crate::{app, cli::Cli, config::Settings, exit::AppError, probe, version, workspace};
 use batuta_tui::app::{FooterState, Model, SessionHeader};
 use compozy_client::{
     Error, SessionQuery,
@@ -14,6 +8,7 @@ use std::io::IsTerminal;
 
 pub async fn run(
     cli: &Cli,
+    settings: &Settings,
     requested_session: Option<&str>,
     all_agents: bool,
 ) -> Result<(), AppError> {
@@ -27,13 +22,14 @@ pub async fn run(
             status: None,
             workspace: None,
             warnings: vec!["daemon unreachable".into()],
+            config: None,
         };
         eprint!("{}", crate::doctor::render_human_error(&report));
         return Err(AppError::reported(1));
     };
     let status = client.status().await?;
     let warning = version::check(status.daemon.version.as_deref());
-    let workspace = workspace::resolve_from_daemon(&client, cli.workspace.as_deref()).await?;
+    let workspace = workspace::resolve_from_daemon(&client, settings.workspace.as_deref()).await?;
     let selected_id = match requested_session {
         Some(id) => id.to_owned(),
         None => {
@@ -59,7 +55,7 @@ pub async fn run(
     if !std::io::stdout().is_terminal() {
         return Err(AppError::daemon(tty_required_error()));
     }
-    run_terminal(client, workspace, session, warning).await
+    run_terminal(client, workspace, session, warning, settings).await
 }
 
 async fn run_terminal(
@@ -67,8 +63,12 @@ async fn run_terminal(
     workspace: Workspace,
     session: Session,
     warning: Option<String>,
+    settings: &Settings,
 ) -> Result<(), AppError> {
-    let mut model = Model::new(SessionHeader {
+    let stopped = session.state == "stopped";
+    let stop_reason = session.stop_reason.clone();
+    let stop_detail = session.stop_detail.clone();
+    let mut model = Model::tail(SessionHeader {
         workspace: workspace.name,
         workspace_id: workspace.id,
         session_id: session.id,
@@ -77,31 +77,15 @@ async fn run_terminal(
         state: session.state.clone(),
         warning,
     });
-    if session.state == "stopped" {
-        model.footer = FooterState::Stopped {
-            reason: session.stop_reason,
-            detail: session.stop_detail,
+    if stopped && let Some(detail) = model.session_detail_mut() {
+        detail.view.footer = FooterState::Stopped {
+            reason: stop_reason,
+            detail: stop_detail,
         };
     }
-    let mut terminal = ratatui::init();
-    let _guard = TerminalGuard::enter(RatatuiOps)
-        .map_err(|error| AppError::daemon(format!("initialize terminal: {error}")))?;
-    #[cfg(unix)]
-    let result = tokio::select! {
-        result = batuta_tui::runtime::run(model, client, &mut terminal) => result,
-        _ = termination_signal() => Ok(()),
-    };
-    #[cfg(not(unix))]
-    let result = batuta_tui::runtime::run(model, client, &mut terminal).await;
-    result.map_err(AppError::daemon)
-}
-
-#[cfg(unix)]
-async fn termination_signal() {
-    use tokio::signal::unix::{SignalKind, signal};
-    let mut terminate = signal(SignalKind::terminate()).expect("install SIGTERM handler");
-    let mut hangup = signal(SignalKind::hangup()).expect("install SIGHUP handler");
-    tokio::select! { _ = terminate.recv() => {}, _ = hangup.recv() => {} }
+    model.settings.preset = settings.preset.clone();
+    model.settings.ui = settings.ui.clone();
+    app::run_model(model, client).await
 }
 
 fn selection_query(workspace: &str, all_agents: bool) -> SessionQuery<'_> {

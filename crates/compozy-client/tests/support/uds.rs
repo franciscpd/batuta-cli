@@ -1,7 +1,7 @@
 use crate::support::fixture;
 use bytes::Bytes;
 use http::{Request, Response, StatusCode};
-use http_body_util::Full;
+use http_body_util::{BodyExt, Full};
 use hyper::{body::Incoming, server::conn::http1, service::service_fn};
 use hyper_util::rt::TokioIo;
 use std::{
@@ -23,6 +23,7 @@ pub struct RecordedRequest {
     pub method: String,
     pub path_and_query: String,
     pub host: Option<String>,
+    pub body: Bytes,
 }
 
 #[derive(Clone)]
@@ -84,20 +85,27 @@ impl UdsServer {
                         let requests = Arc::clone(&connection_requests);
                         let queue = Arc::clone(&connection_queue);
                         async move {
+                            let (parts, body) = request.into_parts();
+                            let body = body
+                                .collect()
+                                .await
+                                .expect("collect test request body")
+                                .to_bytes();
                             requests
                                 .lock()
                                 .expect("requests lock")
                                 .push(RecordedRequest {
-                                    method: request.method().to_string(),
-                                    path_and_query: request.uri().path_and_query().map_or_else(
-                                        || request.uri().path().to_owned(),
+                                    method: parts.method.to_string(),
+                                    path_and_query: parts.uri.path_and_query().map_or_else(
+                                        || parts.uri.path().to_owned(),
                                         ToString::to_string,
                                     ),
-                                    host: request
-                                        .headers()
+                                    host: parts
+                                        .headers
                                         .get(http::header::HOST)
                                         .and_then(|value| value.to_str().ok())
                                         .map(str::to_owned),
+                                    body,
                                 });
                             let response = queue
                                 .lock()

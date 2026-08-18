@@ -1,0 +1,14 @@
+{
+  "prompt": {
+    "status": "queued",
+    "mode": "queue",
+    "delivery": "after_turn",
+    "message_id": "msg_0123456789abcdef",
+    "idempotency_key": "idem_0123456789abcdef",
+    "replayed": false,
+    "queue_entry_id": "input_1",
+    "queue_position": 2,
+    "queue_generation": 4,
+    "new_turn_id": null
+  }
+}

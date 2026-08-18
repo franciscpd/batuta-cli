@@ -164,6 +164,7 @@ async fn ut_008_uds_request_uses_localhost_host_and_status_path() {
     assert_eq!(requests[0].method, "GET");
     assert_eq!(requests[0].path_and_query, "/api/status");
     assert_eq!(requests[0].host.as_deref(), Some("localhost"));
+    assert!(requests[0].body.is_empty());
 }
 
 #[tokio::test(start_paused = true)]

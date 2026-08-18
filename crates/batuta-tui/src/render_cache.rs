@@ -1,5 +1,6 @@
 use crate::{
     app::{Model, RenderCacheKey},
+    theme::Theme,
     views::{cards::tool_status, markdown::markdown_text},
 };
 use compozy_client::types::{Entry, Part, Role};
@@ -14,60 +15,88 @@ const PAYLOAD_LINE_LIMIT: usize = 200;
 
 pub fn rebuild(model: &mut Model) {
     let width = model.size.0.saturating_sub(4);
+    let theme = model.theme.clone();
+    let Some(detail) = model.session_detail_mut() else {
+        return;
+    };
     let mut new_cache = std::collections::HashMap::new();
-    for entry in model.transcript.entries() {
+    for entry in detail.transcript.entries() {
         let key = RenderCacheKey {
             start_sequence: entry.start_sequence,
             sequence: entry.sequence,
             width,
-            reasoning_expanded: model.reasoning_expanded,
-            expanded: model.expanded.contains(&entry.start_sequence),
-            color: model.theme.color,
+            reasoning_expanded: detail.view.reasoning_expanded,
+            expanded: detail.view.expanded.contains(&entry.start_sequence),
+            color: theme.color,
         };
-        if let Some(cached) = model.render_cache.get(&key) {
+        if let Some(cached) = detail.view.render_cache.get(&key) {
             new_cache.insert(key, cached.clone());
         } else {
-            new_cache.insert(key.clone(), render_entry(entry, model, key.expanded));
+            new_cache.insert(
+                key.clone(),
+                render_entry(
+                    entry,
+                    &detail.session.agent_name,
+                    &theme,
+                    width,
+                    key.reasoning_expanded,
+                    key.expanded,
+                ),
+            );
         }
     }
-    model.render_cache = new_cache;
+    detail.view.render_cache = new_cache;
+    detail.view.cache_dirty = false;
 }
 
-fn render_entry(entry: &Entry, model: &Model, expanded: bool) -> Text<'static> {
+fn render_entry(
+    entry: &Entry,
+    agent: &str,
+    theme: &Theme,
+    width: u16,
+    reasoning_expanded: bool,
+    expanded: bool,
+) -> Text<'static> {
     let mut lines = Vec::new();
     let role = match &entry.message.role {
         Role::User => "user",
-        Role::Assistant => model.header.agent.as_str(),
+        Role::Assistant => agent,
         Role::System => "system",
         Role::Unknown => "unknown",
         Role::Other(value) => value,
     };
     lines.push(Line::from(Span::styled(
         format!("▸ {role}"),
-        model.theme.emphasis,
+        theme.emphasis,
     )));
     for part in &entry.message.parts {
-        render_part(part, model, expanded, &mut lines);
+        render_part(part, theme, reasoning_expanded, expanded, &mut lines);
     }
     lines.push(Line::default());
     Text::from(wrap_lines(
         lines,
-        usize::from(model.size.0.saturating_sub(1)).max(1),
+        usize::from(width.saturating_add(3)).max(1),
     ))
 }
 
-fn render_part(part: &Part, model: &Model, expanded: bool, lines: &mut Vec<Line<'static>>) {
+fn render_part(
+    part: &Part,
+    theme: &Theme,
+    reasoning_expanded: bool,
+    expanded: bool,
+    lines: &mut Vec<Line<'static>>,
+) {
     if part_size(part) > PART_LIMIT {
         lines.push(indented(
             format!("[part too large: {} bytes]", part_size(part)),
-            model.theme.warning,
+            theme.warning,
         ));
         return;
     }
     match part {
         Part::Text { text, state } => {
             let mut rendered = markdown_text(text);
-            if !model.theme.color {
+            if !theme.color {
                 for line in &mut rendered.lines {
                     line.style = modifiers_only(line.style);
                     for span in &mut line.spans {
@@ -82,20 +111,20 @@ fn render_part(part: &Part, model: &Model, expanded: bool, lines: &mut Vec<Line<
             if state.as_deref() == Some("streaming")
                 && let Some(line) = lines.last_mut()
             {
-                line.spans.push(Span::styled("▍", model.theme.emphasis));
+                line.spans.push(Span::styled("▍", theme.emphasis));
             }
         }
-        Part::Reasoning { text, .. } if !model.reasoning_expanded => {
+        Part::Reasoning { text, .. } if !reasoning_expanded => {
             lines.push(indented(
                 format!("▸ reasoning ({} lines)", text.lines().count().max(1)),
-                model.theme.muted,
+                theme.muted,
             ));
         }
         Part::Reasoning { text, .. } => {
-            lines.push(indented("▾ reasoning".to_owned(), model.theme.muted));
+            lines.push(indented("▾ reasoning".to_owned(), theme.muted));
             lines.extend(
                 text.lines()
-                    .map(|line| indented(format!("  {line}"), model.theme.muted)),
+                    .map(|line| indented(format!("  {line}"), theme.muted)),
             );
         }
         Part::Tool {
@@ -106,7 +135,7 @@ fn render_part(part: &Part, model: &Model, expanded: bool, lines: &mut Vec<Line<
             error_text,
             ..
         } => {
-            let (glyph, style) = tool_status(state.as_deref(), &model.theme);
+            let (glyph, style) = tool_status(state.as_deref(), theme);
             let summary = input.as_ref().and_then(first_scalar).unwrap_or_default();
             lines.push(indented(
                 format!(
@@ -121,14 +150,14 @@ fn render_part(part: &Part, model: &Model, expanded: bool, lines: &mut Vec<Line<
             ));
             if expanded {
                 if let Some(input) = input {
-                    payload("input", input, model.theme.muted, lines);
+                    payload("input", input, theme.muted, lines);
                 }
                 if let Some(output) = output {
-                    payload("output", output, model.theme.muted, lines);
+                    payload("output", output, theme.muted, lines);
                 }
                 if let Some(error) = error_text {
-                    lines.push(indented("  error".to_owned(), model.theme.error));
-                    append_truncated(error, model.theme.error, lines);
+                    lines.push(indented("  error".to_owned(), theme.error));
+                    append_truncated(error, theme.error, lines);
                 }
             }
         }
@@ -136,15 +165,9 @@ fn render_part(part: &Part, model: &Model, expanded: bool, lines: &mut Vec<Line<
             let kind = kind.as_deref().unwrap_or("marker");
             let summary = summary.as_deref().unwrap_or("");
             if kind == "file_mutation_unverified" {
-                lines.push(indented(
-                    format!("! {kind} · {summary}"),
-                    model.theme.warning,
-                ));
+                lines.push(indented(format!("! {kind} · {summary}"), theme.warning));
             } else {
-                lines.push(indented(
-                    format!("─ {kind} · {summary} ─"),
-                    model.theme.muted,
-                ));
+                lines.push(indented(format!("─ {kind} · {summary} ─"), theme.muted));
             }
         }
         Part::Permission { data } => {
@@ -154,18 +177,58 @@ fn render_part(part: &Part, model: &Model, expanded: bool, lines: &mut Vec<Line<
                 .unwrap_or("?");
             let turn = data.get("turn_id").and_then(Value::as_str).unwrap_or("?");
             let summary = data
-                .get("summary")
-                .or_else(|| data.get("title"))
+                .get("title")
+                .or_else(|| data.get("action"))
                 .and_then(Value::as_str)
                 .unwrap_or("approval requested");
+            let input = data
+                .get("raw")
+                .and_then(|raw| raw.get("tool_input"))
+                .and_then(first_scalar)
+                .unwrap_or_default();
+            let always = data
+                .get("raw")
+                .and_then(|raw| raw.get("options"))
+                .and_then(Value::as_array)
+                .is_some_and(|options| {
+                    options.iter().any(|option| {
+                        matches!(
+                            option.get("decision").and_then(Value::as_str),
+                            Some("allow-always" | "reject-always")
+                        )
+                    })
+                });
             let decision = data
                 .get("decision")
                 .and_then(Value::as_str)
                 .map(|value| format!("  {value}"))
                 .unwrap_or_default();
-            lines.push(indented(format!("▪ approval  request_id {request}  turn {turn}  {summary}  read-only here{decision}"), model.theme.warning));
+            lines.push(indented(
+                format!("▪ approval  request {request}  turn {turn}{decision}"),
+                theme.warning,
+            ));
+            lines.push(indented(
+                format!(
+                    "  {summary}{}",
+                    if input.is_empty() {
+                        String::new()
+                    } else {
+                        format!(" · {input}")
+                    }
+                ),
+                theme.default,
+            ));
+            lines.push(indented(
+                if always {
+                    "  a allow once · A allow always · x reject once · X reject always"
+                } else {
+                    "  a allow once · x reject once"
+                }
+                .to_owned(),
+                theme.muted,
+            ));
             if expanded {
-                payload("request", data, model.theme.muted, lines);
+                payload("request", data, theme.muted, lines);
             }
         }
         Part::File {
@@ -178,7 +241,7 @@ fn render_part(part: &Part, model: &Model, expanded: bool, lines: &mut Vec<Line<
                 filename.as_deref().unwrap_or("?"),
                 media_type.as_deref().unwrap_or("unknown")
             ),
-            model.theme.default,
+            theme.default,
         )),
         Part::Event { data } => lines.push(indented(
             format!(
@@ -187,12 +250,11 @@ fn render_part(part: &Part, model: &Model, expanded: bool, lines: &mut Vec<Line<
                     .and_then(Value::as_str)
                     .unwrap_or("unknown")
             ),
-            model.theme.muted,
+            theme.muted,
         )),
-        Part::Unknown { type_ } => lines.push(indented(
-            format!("unknown part: {type_}"),
-            model.theme.muted,
-        )),
+        Part::Unknown { type_ } => {
+            lines.push(indented(format!("unknown part: {type_}"), theme.muted))
+        }
     }
 }
 

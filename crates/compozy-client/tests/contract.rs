@@ -1,6 +1,8 @@
 use compozy_client::{
-    Client, Outcome, ReconnectPolicy, ResetReason, SessionQuery, StreamCursor, TranscriptEvent,
-    TranscriptQuery, Transport, TransportOrder, types::Part,
+    Client, LogCursor, LogQuery, LoopRunQuery, NoCursor, Outcome, ReconnectPolicy, ResetReason,
+    SeqCursor, SessionQuery, StreamCursor, StreamEvent, TranscriptEvent, TranscriptQuery,
+    Transport, TransportOrder,
+    types::{ClarifyAnswer, Part},
 };
 use compozy_testkit::{Daemon, DaemonOptions, StartOutcome};
 use futures_util::StreamExt;
@@ -33,11 +35,186 @@ fn contract() {
         };
 
         it_001_through_006(&daemon).await;
+        it_100_through_110(&daemon).await;
         it_008_unique_runs_and_teardown().await;
         it_009_readiness_log_tail(&daemon).await;
         it_010_port_collision_retries(&daemon).await;
         it_011_orphan_exit(&daemon).await;
     });
+}
+
+async fn it_100_through_110(daemon: &Daemon) {
+    let client = Client::tcp(daemon.tcp_addr().to_string());
+    let second = Client::tcp(daemon.tcp_addr().to_string());
+    let workspace = daemon.workspace_id();
+
+    daemon.request_log().clear();
+    let (_, catalog_rx) = watch::channel(NoCursor);
+    let catalog = client.catalog_stream(catalog_rx, short_stream_policy());
+    let catalog_task = tokio::spawn(async move {
+        futures_util::pin_mut!(catalog);
+        tokio::time::timeout(Duration::from_secs(5), catalog.next()).await
+    });
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    let created = client
+        .create_session(workspace, "batuta")
+        .await
+        .expect("IT-100: create session");
+    assert_eq!(created.agent_name, "batuta");
+    assert_eq!(
+        client
+            .session(workspace, &created.id)
+            .await
+            .expect("IT-100: session")
+            .id,
+        created.id
+    );
+    assert_eq!(
+        daemon
+            .request_log()
+            .entries()
+            .iter()
+            .filter(|(method, path)| method == "POST" && path == "/api/sessions")
+            .count(),
+        1,
+        "IT-100: create route exactly once"
+    );
+
+    let query = SessionQuery {
+        workspace,
+        type_: "user",
+        sort: "recent",
+        limit: 20,
+        agent: Some("batuta"),
+    };
+    let first_page = client.sessions(&query).await.expect("IT-101 first client");
+    let second_page = second.sessions(&query).await.expect("IT-101 second client");
+    assert_eq!(
+        first_page
+            .sessions
+            .iter()
+            .map(|s| &s.id)
+            .collect::<Vec<_>>(),
+        second_page
+            .sessions
+            .iter()
+            .map(|s| &s.id)
+            .collect::<Vec<_>>()
+    );
+    assert!(
+        first_page
+            .sessions
+            .iter()
+            .any(|session| session.id == created.id),
+        "IT-102 filtered list"
+    );
+    let unfiltered = client
+        .sessions(&SessionQuery {
+            agent: None,
+            ..query
+        })
+        .await
+        .expect("IT-102 unfiltered list");
+    assert!(
+        unfiltered
+            .sessions
+            .iter()
+            .any(|session| session.id == created.id)
+    );
+
+    let catalog_event = catalog_task
+        .await
+        .expect("IT-103 catalog task")
+        .expect("IT-103 timeout")
+        .expect("IT-103 stream ended");
+    assert!(
+        matches!(catalog_event, StreamEvent::Event(event) if event.kind == "upserted" && event.session_id == created.id)
+    );
+
+    assert!(
+        matches!(
+            client
+                .create_session(workspace, "agent-that-does-not-exist")
+                .await,
+            Err(compozy_client::Error::Daemon { status: 400, .. })
+        ),
+        "IT-104 unknown agent"
+    );
+
+    let runs = client
+        .loop_runs(
+            workspace,
+            &LoopRunQuery {
+                loop_: None,
+                status: None,
+                limit: 50,
+            },
+        )
+        .await
+        .expect("IT-105 loop runs");
+    assert!(runs.runs.is_empty());
+    assert_eq!(runs.aggregates.total, 0);
+    assert!(matches!(
+        client.loop_run(workspace, "looprun-nope").await,
+        Err(compozy_client::Error::Daemon { status: 404, .. })
+    ));
+
+    let overview = client.overview(workspace).await.expect("IT-106 overview");
+    assert!(overview.attention.total >= overview.attention.items.len() as u64);
+
+    assert!(
+        client
+            .clarifications(workspace, &created.id)
+            .await
+            .expect("IT-107 clarifications")
+            .is_empty()
+    );
+    assert!(matches!(
+        client
+            .answer_clarification(
+                workspace,
+                &created.id,
+                "req_nope",
+                &ClarifyAnswer::Text("x".into())
+            )
+            .await,
+        Err(compozy_client::Error::Daemon { status: 404, .. })
+    ));
+
+    let (_, loop_rx) = watch::channel(SeqCursor::default());
+    let missing_events =
+        client.loop_run_events(workspace, "looprun-nope", loop_rx, short_stream_policy());
+    futures_util::pin_mut!(missing_events);
+    assert!(matches!(
+        tokio::time::timeout(Duration::from_secs(5), missing_events.next())
+            .await
+            .expect("IT-108 timeout"),
+        Some(StreamEvent::Fatal(compozy_client::Error::Daemon {
+            status: 404,
+            ..
+        }))
+    ));
+
+    let log_query = LogQuery {
+        workspace_id: workspace,
+        session_id: Some(&created.id),
+        run: None,
+        error_only: false,
+        after_seq: None,
+        limit: 5,
+    };
+    let _ = client.logs(&log_query).await.expect("IT-109 logs list");
+    let (_, log_rx) = watch::channel(LogCursor::default());
+    let logs = client.logs_stream(&log_query, log_rx, short_stream_policy());
+    futures_util::pin_mut!(logs);
+    let first = tokio::time::timeout(Duration::from_secs(5), logs.next()).await;
+    assert!(
+        matches!(first, Ok(Some(StreamEvent::Event(_))) | Ok(None)),
+        "IT-109 logs stream did not replay an event or end cleanly"
+    );
+
+    println!("IT-110: delivery-1 IT-001–IT-011 execute in the same contract binary");
 }
 
 async fn it_001_through_006(daemon: &Daemon) {

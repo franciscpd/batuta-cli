@@ -1,22 +1,25 @@
+use crate::version;
 use clap::{Parser, Subcommand, ValueEnum};
 
 #[derive(Debug, Parser)]
 #[command(
     name = "batuta",
-    version = "0.1.0 (compozy floor v0.3.0-beta.16)",
+    version = version::CLAP_VERSION,
     about = "Read-only terminal client for CompozyOS"
 )]
 pub struct Cli {
-    #[arg(long, global = true, env = "COMPOZY_WORKSPACE")]
+    #[arg(long, global = true)]
     pub workspace: Option<String>,
-    #[arg(long, global = true, value_enum, default_value_t = DaemonArg::Auto)]
-    pub daemon: DaemonArg,
-    #[arg(long, global = true, default_value = "localhost:2123")]
-    pub tcp_addr: String,
+    #[arg(long, global = true, value_enum)]
+    pub daemon: Option<DaemonArg>,
+    #[arg(long, global = true)]
+    pub tcp_addr: Option<String>,
+    #[arg(long, global = true)]
+    pub config: Option<std::path::PathBuf>,
     #[arg(long, global = true)]
     pub json: bool,
     #[command(subcommand)]
-    pub command: Command,
+    pub command: Option<Command>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]

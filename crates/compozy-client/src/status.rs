@@ -20,6 +20,7 @@ impl Client {
         let error = crate::request::response_error(
             response.status,
             &response.body,
+            "GET",
             PATH,
             "status",
             RouteKind::Fixed,

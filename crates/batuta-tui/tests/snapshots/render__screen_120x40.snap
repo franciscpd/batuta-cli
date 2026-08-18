@@ -19,11 +19,11 @@ beginning of transcript
   ▶ Task   Track A: daemon API facts
   ─ prompt_accepted · turn accepted ─
   ! file_mutation_unverified · executor edited files without verification
-  ▪ approval  request_id req_3f9c  turn turn-073fb634a25a1f32  Bash: rm -rf build/  read-only here
+  ▪ approval  request req_3f9c  turn turn-073fb634a25a1f32
+    approval requested
+    a allow once · x reject once
   file: report.txt (text/plain)
   unknown part: future-part
-
-
 
 
 

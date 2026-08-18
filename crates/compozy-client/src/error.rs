@@ -19,8 +19,6 @@ pub enum Error {
     },
     #[error("route missing in this daemon version: {method} {path}")]
     RouteMissing { method: &'static str, path: String },
-    #[error("daemon is draining")]
-    Draining,
     #[error("decode {context}: {source}")]
     Decode {
         context: &'static str,

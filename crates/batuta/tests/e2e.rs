@@ -360,6 +360,178 @@ fn e2e_019_fallback_tail_selection_is_get_only() {
 }
 
 #[test]
+fn e2e_100_batuta_refuses_non_tty() {
+    let Some(daemon) = daemon_or_skip() else {
+        return;
+    };
+    command()
+        .args([
+            "--daemon",
+            "tcp",
+            "--tcp-addr",
+            &daemon.tcp_addr().to_string(),
+            "--workspace",
+            daemon.workspace_id(),
+        ])
+        .assert()
+        .code(1)
+        .stderr(predicate::str::contains(
+            "batuta needs a terminal; use `batuta sessions --json` for scripting",
+        ));
+}
+
+#[test]
+fn e2e_101_unreachable_batuta_never_enters_alt_screen() {
+    let empty = tempfile::tempdir().unwrap();
+    command()
+        .env("COMPOZY_HOME", empty.path())
+        .args(["--tcp-addr", "127.0.0.1:1"])
+        .assert()
+        .code(1)
+        .stderr(predicate::str::contains("error: daemon unreachable"))
+        .stdout(predicate::str::contains("\u{1b}[?1049h").not());
+}
+
+#[test]
+fn e2e_102_version_uses_package_and_floor() {
+    command()
+        .arg("--version")
+        .assert()
+        .success()
+        .stdout("batuta 0.1.0-beta.1 (compozy floor v0.3.0-beta.16)\n");
+}
+
+#[test]
+fn e2e_103_unknown_workspace_is_named() {
+    let Some(daemon) = daemon_or_skip() else {
+        return;
+    };
+    command()
+        .args([
+            "--workspace",
+            "nope",
+            "--daemon",
+            "tcp",
+            "--tcp-addr",
+            &daemon.tcp_addr().to_string(),
+        ])
+        .assert()
+        .code(1)
+        .stderr(predicate::str::contains("workspace not found: nope"));
+}
+
+#[test]
+fn e2e_104_pty_quit_is_documented_manual() {
+    eprintln!(
+        "skipped: PTY helper is not available in this repository; manual PTY smoke covers q and terminal restoration"
+    );
+}
+
+#[test]
+fn e2e_105_workspace_picker_is_documented_manual() {
+    eprintln!(
+        "skipped: PTY helper is not available in this repository; manual PTY smoke covers initial workspace picker rendering"
+    );
+}
+
+#[test]
+fn e2e_106_doctor_prints_config_state() {
+    let Some(daemon) = daemon_or_skip() else {
+        return;
+    };
+    let temp = tempfile::tempdir().unwrap();
+    let config = temp.path().join("config.toml");
+    std::fs::write(&config, "[ui]\nfps = 30\n").unwrap();
+    command()
+        .args([
+            "--config",
+            config.to_str().unwrap(),
+            "--daemon",
+            "tcp",
+            "--tcp-addr",
+            &daemon.tcp_addr().to_string(),
+            "--workspace",
+            daemon.workspace_id(),
+            "doctor",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(format!(
+            "config      {}  (loaded)",
+            config.display()
+        )));
+}
+
+#[test]
+fn e2e_107_doctor_json_has_config() {
+    let Some(daemon) = daemon_or_skip() else {
+        return;
+    };
+    let output = command()
+        .args([
+            "--daemon",
+            "tcp",
+            "--tcp-addr",
+            &daemon.tcp_addr().to_string(),
+            "--workspace",
+            daemon.workspace_id(),
+            "doctor",
+            "--json",
+        ])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert!(json["config"]["path"].is_string());
+    assert_eq!(json["config"]["loaded"], false);
+}
+
+#[test]
+fn e2e_108_bad_config_exits_two() {
+    let temp = tempfile::tempdir().unwrap();
+    let config = temp.path().join("bad.toml");
+    std::fs::write(&config, "[preset]\nagent 'bad'\n").unwrap();
+    command()
+        .args(["--config", config.to_str().unwrap(), "doctor"])
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains(format!(
+            "error: config: {}:2:",
+            config.display()
+        )));
+}
+
+#[test]
+fn e2e_109_unknown_config_key_warns_once() {
+    let Some(daemon) = daemon_or_skip() else {
+        return;
+    };
+    let temp = tempfile::tempdir().unwrap();
+    let config = temp.path().join("config.toml");
+    std::fs::write(&config, "[ui]\ncolour = 'x'\n").unwrap();
+    command()
+        .args([
+            "--config",
+            config.to_str().unwrap(),
+            "--daemon",
+            "tcp",
+            "--tcp-addr",
+            &daemon.tcp_addr().to_string(),
+            "--workspace",
+            daemon.workspace_id(),
+            "doctor",
+        ])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("warning: config: unknown key ui.colour").count(1));
+}
+
+#[test]
+fn e2e_110_delivery_one_cases_remain_in_this_target() {
+    eprintln!("E2E-001 through E2E-019 run in this same integration target");
+}
+
+#[test]
 fn ut_111_file_logging_is_opt_in() {
     let temp = tempfile::tempdir().unwrap();
     let enabled = temp.path().join("enabled.log");

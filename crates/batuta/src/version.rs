@@ -1,6 +1,8 @@
 use semver::Version;
 
 pub const MIN_COMPOZY_VERSION: &str = "v0.3.0-beta.16";
+pub const CLAP_VERSION: &str =
+    concat!(env!("CARGO_PKG_VERSION"), " (compozy floor v0.3.0-beta.16)");
 
 pub fn check(version: Option<&str>) -> Option<String> {
     let value = version.unwrap_or("").trim();

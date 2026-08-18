@@ -23,6 +23,11 @@ redact_json() {
       elif has("sessions") then {sessions: [.sessions[] | session], page}
       elif has("session") then {session: (.session | session)}
       elif has("entries") then .entries |= map(.message.parts |= map(part))
+      elif has("overview") then {overview: (.overview | {schema_version, generated_at, attention})}
+      elif has("runs") then {runs: [.runs[] | del(.inputs, .start_metadata)], aggregates}
+      elif has("run") then {run: (.run | del(.inputs, .start_metadata)), generations: [.generations[] | .outputs |= map(del(.output_ref))], node_controls, waits}
+      elif has("events") then {events: [.events[] | del(.content) | .summary = "[redacted]"]}
+      elif has("clarifications") then {clarifications: [.clarifications[] | .question = "[redacted]" | .choices |= map("[redacted]")]}
       else . end
     '
 }
@@ -36,7 +41,10 @@ redact_stream() {
                     | if has("title") then .title = "[redacted]" else . end
                     | if has("text") then .text = "[redacted]" else . end
                     | if has("data") then .data |= if type == "object" then {type, kind, summary, occurred_at, evidence} else . end else . end;
-                  if has("entries") then del(.workspace_path) | .entries |= map(.message.parts |= map(part)) else . end
+                  if has("entries") then del(.workspace_path) | .entries |= map(.message.parts |= map(part))
+                  elif has("loop_run_id") then .payload |= del(.output_ref)
+                  elif has("timestamp") and has("type") then del(.content) | .summary = "[redacted]"
+                  else . end
                 ' | sed 's/^/data: /'
                 ;;
             *) printf '%s\n' "$line" ;;
@@ -49,6 +57,32 @@ get /api/workspaces | redact_json > "$fixtures/workspaces.json"
 get "/api/sessions?workspace=$workspace_id&type=user&sort=recent&limit=5" | redact_json > "$fixtures/sessions.json"
 get "/api/workspaces/$workspace_id/sessions/$session_id" | redact_json > "$fixtures/session.json"
 get "/api/workspaces/$workspace_id/sessions/$session_id/transcript?limit=200" | redact_json > "$fixtures/transcript_page.json"
+get "/api/observe/overview?workspace=$workspace_id" | redact_json > "$fixtures/overview.json"
+get "/api/workspaces/$workspace_id/sessions/$session_id/clarifications" | redact_json > "$fixtures/clarifications.json"
+get "/api/logs?workspace_id=$workspace_id&session_id=$session_id&limit=20" | redact_json > "$fixtures/logs.json"
+
+loop_runs=$(get "/api/workspaces/$workspace_id/loop-runs?limit=20")
+printf '%s' "$loop_runs" | redact_json > "$fixtures/loop_runs.json"
+loop_run_id=$(printf '%s' "$loop_runs" | jq -r '.runs | map(select(.status == "done")) | (.[0].id // empty)')
+if [[ -z "$loop_run_id" ]]; then
+  loop_run_id=$(printf '%s' "$loop_runs" | jq -r '.runs[0].id // empty')
+fi
+if [[ -n "$loop_run_id" ]]; then
+  get "/api/workspaces/$workspace_id/loop-runs/$loop_run_id" | redact_json > "$fixtures/loop_run.json"
+  timeout 4 curl --silent --no-buffer --unix-socket "$socket" \
+    "http://localhost/api/workspaces/$workspace_id/loop-runs/$loop_run_id/events" \
+    | head -n 30 | redact_stream > "$fixtures/loop_events.sse" || true
+else
+  printf '{"run":null,"generations":[],"node_controls":[],"waits":[]}\n' > "$fixtures/loop_run.json"
+  : > "$fixtures/loop_events.sse"
+fi
+
+timeout 4 curl --silent --no-buffer --unix-socket "$socket" \
+  "http://localhost/api/logs/stream?workspace_id=$workspace_id&session_id=$session_id&limit=20" \
+  | head -n 30 | redact_stream > "$fixtures/logs_stream.sse" || true
+timeout 4 curl --silent --no-buffer --unix-socket "$socket" \
+  "http://localhost/api/sessions/catalog-stream" \
+  | head -n 6 | redact_stream > "$fixtures/catalog.sse" || true
 
 timeout 4 curl --silent --no-buffer --unix-socket "$socket" \
   "http://localhost/api/workspaces/$workspace_id/sessions/$session_id/stream?frames=transcript" \

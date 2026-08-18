@@ -17,6 +17,7 @@ pub async fn run(cli: &Cli, all_agents: bool, limit: i64) -> Result<(), AppError
                 status: None,
                 workspace: None,
                 warnings: vec!["daemon unreachable".into()],
+                config: None,
             };
             eprint!("{}", crate::doctor::render_human_error(&report));
             return Err(AppError::reported(1));

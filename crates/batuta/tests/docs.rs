@@ -3,6 +3,7 @@ use std::path::PathBuf;
 
 const FINDINGS: &str = include_str!("../../../docs/internal/plans/2026-08-17-spike-findings.md");
 const DESIGN: &str = include_str!("../../../docs/internal/specs/2026-08-17-batuta-cli-design.md");
+const README: &str = include_str!("../../../README.md");
 const LAYOUT: &str = include_str!("fixtures/design-layout.txt");
 
 #[test]
@@ -77,4 +78,58 @@ fn ut_231_design_spec_has_corrected_facts_and_unchanged_layout() {
     let fixture_path =
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/design-layout.txt");
     assert_eq!(fs::read_to_string(fixture_path).unwrap(), LAYOUT);
+}
+
+#[test]
+fn ut_670_design_spec_has_mvp_daemon_facts_and_unchanged_layout() {
+    for fact in [
+        "session_catalog_changed {kind, workspace_id, session_id}",
+        "no `Last-Event-ID`",
+        "allow-once | allow-always | reject-once | reject-always",
+        "three sources defined by ADR-001",
+        "task-level\n  `observe/overview.attention`",
+        "`Last-Event-ID` = `seq`",
+        "`POST .../loop-runs/{id}/{pause,resume,kill} {}`",
+        "{gate_id, decision}",
+        "approve | request_changes | reject",
+        "workspace_id",
+        "RFC3339Nano|seq",
+    ] {
+        assert!(DESIGN.contains(fact), "missing MVP daemon fact {fact}");
+    }
+
+    let product_shape = DESIGN
+        .split("## Product shape\n\n")
+        .nth(1)
+        .expect("product shape section")
+        .split("\n\nPanels:")
+        .next()
+        .expect("product shape layout")
+        .to_owned()
+        + "\n";
+    assert_eq!(product_shape, LAYOUT, "product shape ASCII layout changed");
+}
+
+#[test]
+fn ut_671_findings_document_points_to_current_test_paths() {
+    assert!(FINDINGS.contains("crates/batuta-tui/tests/state.rs"));
+    assert!(FINDINGS.contains("crates/batuta-tui/tests/render.rs"));
+    assert!(!FINDINGS.contains("crates/batuta-tui/tests/app.rs"));
+    assert!(!FINDINGS.contains("crates/batuta-tui/tests/views.rs"));
+}
+
+#[test]
+fn ut_672_readme_has_required_sections_and_commands() {
+    for section in ["# Install", "# Usage", "# Config", "# Keys"] {
+        assert!(README.contains(section), "missing README section {section}");
+    }
+    for command in [
+        "cargo install --path crates/batuta",
+        "batuta",
+        "batuta doctor",
+        "batuta sessions",
+        "batuta tail",
+    ] {
+        assert!(README.contains(command), "missing README command {command}");
+    }
 }

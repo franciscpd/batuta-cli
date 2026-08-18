@@ -6,16 +6,20 @@ rust-version.workspace = true
 license.workspace = true
 
 [dependencies]
+async-stream = "0.3"
 compozy-client = { path = "../compozy-client" }
 crossterm.workspace = true
 futures-util.workspace = true
 ratatui.workspace = true
+semver.workspace = true
 tokio.workspace = true
 tokio-util.workspace = true
 tracing.workspace = true
 tui-markdown.workspace = true
+tui-textarea-2.workspace = true
 unicode-width.workspace = true
 serde_json.workspace = true
 
 [dev-dependencies]
 insta = "1.48"
+tokio = { workspace = true, features = ["test-util"] }

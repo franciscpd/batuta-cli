@@ -1,55 +1,32 @@
 use crate::{
-    app::{FooterState, Model},
-    keymap,
+    app::{Detail, Model, Panel},
+    keymap::{self, Context},
 };
-use ratatui::{
-    Frame,
-    layout::{Constraint, Direction, Layout, Rect},
-    widgets::Paragraph,
-};
-
-pub fn status(model: &Model) -> String {
-    match &model.footer {
-        FooterState::Live => "live".into(),
-        FooterState::Stopped { reason, detail } => {
-            let mut value = "stopped — sending a prompt restarts it".to_owned();
-            if let Some(reason) = reason {
-                value.push_str(&format!(" · {reason}"));
-            }
-            if let Some(detail) = detail {
-                value.push_str(&format!(" · {detail}"));
-            }
-            value
-        }
-        FooterState::Reconnecting(attempt) => {
-            format!("stream lost — reconnecting (attempt {attempt})")
-        }
-        FooterState::Offline => "daemon offline — last state shown".into(),
-        FooterState::Resynchronized(reason) => format!("resynchronized ({reason})"),
-        FooterState::NewBelow(count) => format!("{count} new below — G to jump"),
-        FooterState::Fatal(error) => format!("stream stopped — {error}"),
+use ratatui::{Frame, layout::Rect, widgets::Paragraph};
+pub fn contexts(model: &Model) -> Vec<Context> {
+    if model.overlay.is_some() {
+        return vec![Context::Overlays];
+    }
+    if model.composer_focused() {
+        return vec![Context::Composer];
+    }
+    match model.focus {
+        Panel::Sessions => vec![Context::Global, Context::Lists, Context::Sessions],
+        Panel::Runs => vec![Context::Global, Context::Lists],
+        Panel::Attention => vec![Context::Global, Context::Lists, Context::Attention],
+        Panel::Detail => match model.detail {
+            Detail::Session(_) => vec![Context::Global, Context::SessionDetail],
+            Detail::Run(_) => vec![Context::Global, Context::RunDetail],
+            Detail::Empty => vec![Context::Global],
+        },
     }
 }
-
 pub fn render(model: &Model, frame: &mut Frame<'_>, area: Rect) {
-    let status = status(model);
-    let status_width = status.chars().count().min(usize::from(area.width)) as u16;
-    let columns = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([
-            Constraint::Min(0),
-            Constraint::Length(2),
-            Constraint::Length(status_width),
-        ])
-        .split(area);
-    frame.render_widget(
-        Paragraph::new(keymap::footer()).style(model.theme.muted),
-        columns[0],
-    );
-    frame.render_widget(
-        Paragraph::new(status)
-            .right_aligned()
-            .style(model.theme.emphasis),
-        columns[2],
-    );
+    let text = if model.focus == Panel::Attention {
+        crate::app::panels::attention::allowed_verbs(model)
+            .unwrap_or_else(|| keymap::footer(&contexts(model)))
+    } else {
+        keymap::footer(&contexts(model))
+    };
+    frame.render_widget(Paragraph::new(text).style(model.theme.muted), area);
 }
