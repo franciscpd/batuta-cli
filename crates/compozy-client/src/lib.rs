@@ -1,8 +1,10 @@
+mod clarify;
 pub mod error;
 mod request;
 mod sessions;
 pub mod sse;
 mod status;
+mod tasks;
 mod transcript;
 pub mod transport;
 pub mod types;
@@ -11,20 +13,22 @@ mod workspaces;
 pub use error::Error;
 pub use sessions::SessionQuery;
 pub use sse::{ReconnectPolicy, ResetReason, StreamCursor, TranscriptEvent};
+pub use tasks::TaskVerb;
 pub use transcript::TranscriptQuery;
 pub use transport::{Outcome, ProbeReport, TargetOutcome, Transport, TransportOrder};
 
 use bytes::Bytes;
-use http_body_util::Empty;
+use http_body_util::combinators::BoxBody;
 use hyper_util::client::legacy::{Client as HyperClient, connect::HttpConnector};
 use hyper_util::rt::TokioExecutor;
-use std::{path::PathBuf, time::Duration};
+use std::{convert::Infallible, path::PathBuf, time::Duration};
 use transport::UnixConnector;
 
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
 
-type UdsClient = HyperClient<UnixConnector, Empty<Bytes>>;
-type TcpClient = HyperClient<HttpConnector, Empty<Bytes>>;
+type RequestBody = BoxBody<Bytes, Infallible>;
+type UdsClient = HyperClient<UnixConnector, RequestBody>;
+type TcpClient = HyperClient<HttpConnector, RequestBody>;
 
 #[derive(Clone)]
 pub(crate) enum HttpClient {

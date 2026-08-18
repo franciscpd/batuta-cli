@@ -254,7 +254,7 @@ impl Client {
             builder = builder.header("Last-Event-ID", cursor.after_sequence.to_string());
         }
         let request = builder
-            .body(Empty::<Bytes>::new())
+            .body(Empty::<Bytes>::new().boxed())
             .map_err(|error| ConnectFailure::Fatal(Error::Transport(error.to_string())))?;
         let operation = async {
             match &self.sse {
@@ -276,7 +276,14 @@ impl Client {
             .map_err(|_| ConnectFailure::Retry(format!("idle timeout after {idle_timeout:?}")))?
             .map_err(|error| ConnectFailure::Retry(error.to_string()))?
             .to_bytes();
-        let error = response_error(status, &body, &path, "transcript stream", RouteKind::Scoped);
+        let error = response_error(
+            status,
+            &body,
+            "GET",
+            &path,
+            "transcript stream",
+            RouteKind::Scoped,
+        );
         if status.is_client_error() {
             Err(ConnectFailure::Fatal(error))
         } else {

@@ -1,7 +1,9 @@
 use compozy_client::types::{
-    ErrorPayload, Part, Session, SessionPage, SessionResponse, SessionStopped, StatusPayload,
+    Clarification, ClarifyAnswer, ClarifyResult, Decision, ErrorPayload, Part, PermissionData,
+    PromptMode, PromptResult, Session, SessionPage, SessionResponse, SessionStopped, StatusPayload,
     Timestamp, TranscriptPage, TranscriptSnapshot, WorkspacesResponse,
 };
+use serde_json::{Value, json};
 
 const FIXTURES: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures");
 
@@ -136,4 +138,111 @@ fn captured_fixtures_decode_to_their_contract_types() {
             .unwrap();
         let _: TranscriptSnapshot = serde_json::from_str(data).unwrap();
     }
+}
+
+#[test]
+fn ut_341_permission_data_parses_the_permission_part_payload() {
+    let part: Part = serde_json::from_value(json!({
+        "type": "data-compozy-permission",
+        "data": {
+            "request_id": "req_3f9c",
+            "turn_id": "turn-073fb634a25a1f32",
+            "title": "Bash",
+            "action": "rm -rf build/",
+            "decision": null,
+            "raw": {
+                "tool_input": {"command": "rm -rf build/"},
+                "options": [{
+                    "decision": "allow-once",
+                    "option_id": "allow-once",
+                    "kind": "allow",
+                    "label": "Allow once"
+                }]
+            }
+        }
+    }))
+    .unwrap();
+    let permission = PermissionData::from_part(&part)
+        .expect("permission part")
+        .expect("permission data");
+    assert_eq!(permission.request_id, "req_3f9c");
+    assert_eq!(permission.turn_id, "turn-073fb634a25a1f32");
+    assert_eq!(permission.raw.tool_input["command"], "rm -rf build/");
+    assert_eq!(permission.raw.options[0].decision, "allow-once");
+}
+
+#[test]
+fn ut_342_session_activity_turn_fields_and_badge_decode() {
+    let response: SessionResponse = serde_json::from_str(&fixture("session.json")).unwrap();
+    assert_eq!(response.session.badge.as_deref(), Some("running"));
+    let activity = response.session.activity.expect("activity");
+    assert_eq!(activity.turn_id.as_deref(), Some("turn-e4d3bc17589f5666"));
+    assert!(activity.turn_started_at.is_some());
+}
+
+#[test]
+fn ut_343_clarify_answer_serializes_exactly_one_key() {
+    for (answer, expected) in [
+        (ClarifyAnswer::Choice(2), json!({"choice_index": 2})),
+        (ClarifyAnswer::Text("x".to_owned()), json!({"text": "x"})),
+    ] {
+        let value = serde_json::to_value(answer).unwrap();
+        assert_eq!(value, expected);
+        assert_eq!(value.as_object().unwrap().len(), 1);
+    }
+}
+
+#[test]
+fn ut_344_decision_and_prompt_mode_wire_strings_round_trip() {
+    for (decision, wire) in [
+        (Decision::AllowOnce, "allow-once"),
+        (Decision::AllowAlways, "allow-always"),
+        (Decision::RejectOnce, "reject-once"),
+        (Decision::RejectAlways, "reject-always"),
+    ] {
+        assert_eq!(serde_json::to_value(decision).unwrap(), wire);
+        assert_eq!(
+            serde_json::from_value::<Decision>(Value::String(wire.to_owned())).unwrap(),
+            decision
+        );
+    }
+    for (mode, wire) in [
+        (PromptMode::Queue, "queue"),
+        (PromptMode::Steer, "steer"),
+        (PromptMode::Interrupt, "interrupt"),
+    ] {
+        assert_eq!(serde_json::to_value(mode).unwrap(), wire);
+        assert_eq!(
+            serde_json::from_value::<PromptMode>(Value::String(wire.to_owned())).unwrap(),
+            mode
+        );
+    }
+}
+
+#[test]
+fn hand_authored_write_fixtures_decode_to_contract_types() {
+    let prompt: Value = serde_json::from_str(&fixture("prompt_202.json")).unwrap();
+    let _: PromptResult = serde_json::from_value(prompt["prompt"].clone()).unwrap();
+    for name in [
+        "prompt_409.json",
+        "prompt_413.json",
+        "approve_409.json",
+        "clarify_404.json",
+    ] {
+        let _: ErrorPayload = serde_json::from_str(&fixture(name)).unwrap();
+    }
+    let approve: Value = serde_json::from_str(&fixture("approve_200.json")).unwrap();
+    assert_eq!(approve["status"], "approved");
+    let _: ClarifyResult = serde_json::from_str(&fixture("clarify_200.json")).unwrap();
+    let _: SessionResponse = serde_json::from_str(&fixture("session_created.json")).unwrap();
+
+    let clarification: Clarification = serde_json::from_value(json!({
+        "request_id":"req_1",
+        "session_id":"sess_1",
+        "agent_name":"code_implementer",
+        "question":"Which environment?",
+        "choices":[]
+    }))
+    .unwrap();
+    assert_eq!(clarification.request_id, "req_1");
 }

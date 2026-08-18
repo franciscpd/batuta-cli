@@ -1,0 +1,4 @@
+{
+  "error": "permission request already decided",
+  "code": "session.permission.already_decided"
+}

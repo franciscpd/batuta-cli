@@ -11,3 +11,11 @@ a healthy daemon cannot be made to drain through a read-only capture. `session_s
 is hand-authored from the daemon's `SessionStoppedPayload` Go struct because a
 currently stopped session cannot be streamed on demand. Both fixtures are
 deliberately minimal and labelled here to preserve that provenance.
+
+The delivery-2 write fixtures `prompt_202.json`, `prompt_409.json`,
+`prompt_413.json`, `approve_200.json`, `approve_409.json`, `clarify_200.json`,
+and `clarify_404.json` are hand-authored from the pinned Go contract structs
+and error envelope. `session_created.json` is also hand-authored from the
+pinned `SessionResponse`/`SessionPayload` structs because no disposable daemon
+was available during authoring. Task 2 may replace it with a redacted live
+capture when the contract pin is refreshed.

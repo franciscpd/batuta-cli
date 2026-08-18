@@ -1,0 +1,4 @@
+{
+  "error": "session: active turn mismatch",
+  "code": "session.active_turn_mismatch"
+}

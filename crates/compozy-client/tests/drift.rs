@@ -45,6 +45,13 @@ const ROUTE_FIELDS: &[(&str, &[&str])] = &[
 
 fn verify(pin: &Value, routes: &str, fields: &[(&str, &[&str])]) -> Result<(), String> {
     for route in routes.lines().filter(|line| !line.is_empty()) {
+        let Some(known) = fields
+            .iter()
+            .find(|(known_route, _)| *known_route == route)
+            .map(|(_, names)| *names)
+        else {
+            continue;
+        };
         let (method, path) = route
             .split_once(' ')
             .ok_or_else(|| format!("invalid route {route}"))?;
@@ -60,11 +67,6 @@ fn verify(pin: &Value, routes: &str, fields: &[(&str, &[&str])]) -> Result<(), S
             .and_then(Value::as_array)
             .cloned()
             .unwrap_or_default();
-        let known = fields
-            .iter()
-            .find(|(known_route, _)| *known_route == route)
-            .map(|(_, names)| *names)
-            .ok_or_else(|| format!("missing serde table for {route}"))?;
         for name in required.iter().filter_map(Value::as_str) {
             if !known.contains(&name) {
                 return Err(format!(

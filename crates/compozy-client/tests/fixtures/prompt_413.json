@@ -1,0 +1,7 @@
+{
+  "error": "The session input queue is at capacity.",
+  "code": "session.input_queue.full",
+  "details": {
+    "queue_cap": 10
+  }
+}

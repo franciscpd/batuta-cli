@@ -4,3 +4,12 @@ GET /api/sessions
 GET /api/workspaces/{workspace_id}/sessions/{session_id}
 GET /api/workspaces/{workspace_id}/sessions/{session_id}/transcript
 GET /api/workspaces/{workspace_id}/sessions/{session_id}/stream
+POST /api/sessions
+POST /api/workspaces/{workspace_id}/sessions/{session_id}/prompt
+POST /api/workspaces/{workspace_id}/sessions/{session_id}/prompt/cancel
+POST /api/workspaces/{workspace_id}/sessions/{session_id}/approve
+GET /api/workspaces/{workspace_id}/sessions/{session_id}/clarifications
+POST /api/workspaces/{workspace_id}/sessions/{session_id}/clarifications/{request_id}/answer
+POST /api/workspaces/{workspace_id}/tasks/{task_id}/approve
+POST /api/workspaces/{workspace_id}/tasks/{task_id}/reject
+POST /api/tasks/{id}/runs

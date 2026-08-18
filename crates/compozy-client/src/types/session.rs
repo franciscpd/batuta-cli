@@ -24,6 +24,10 @@ pub struct SessionPage {
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub struct Activity {
     #[serde(default)]
+    pub turn_id: Option<String>,
+    #[serde(default)]
+    pub turn_started_at: Option<Timestamp>,
+    #[serde(default)]
     pub last_activity_at: Option<Timestamp>,
     #[serde(default)]
     pub last_activity_kind: Option<String>,
