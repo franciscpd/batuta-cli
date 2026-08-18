@@ -152,6 +152,7 @@ fn transcript(model: &mut Model, session: &str, event: TranscriptEvent) -> Vec<C
         TranscriptEvent::Stopped(stopped) => {
             detail.view.stopped = true;
             detail.stream = StreamStatus::Stopped;
+            detail.session.state = "stopped".into();
             detail.view.footer = FooterState::Stopped {
                 reason: stopped.stop_reason,
                 detail: stopped.stop_detail,

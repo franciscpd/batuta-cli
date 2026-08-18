@@ -185,7 +185,7 @@ fn ut_443_question_types_and_f1_opens_help() {
     });
     model.session_detail_mut().unwrap().composer.focused = true;
     update(&mut model, press(KeyCode::Char('?')));
-    assert_eq!(model.session_detail().unwrap().composer.text, "?");
+    assert_eq!(model.session_detail().unwrap().composer.text(), "?");
     update(&mut model, press(KeyCode::F(1)));
     assert!(matches!(model.overlay, Some(Overlay::Help { .. })));
 }
@@ -215,7 +215,7 @@ fn ut_451_quit_guard_and_expiry() {
     });
     {
         let detail = model.session_detail_mut().unwrap();
-        detail.composer.text = "draft".into();
+        detail.composer.set_text("draft");
         detail.composer.focused = true;
     }
     let ctrl_c = Msg::Key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL));
@@ -234,7 +234,7 @@ fn ut_451_quit_guard_and_expiry() {
         Some(Cmd::Quit)
     ));
     let mut model = Model::tail(SessionHeader::default());
-    model.session_detail_mut().unwrap().composer.text = "x".into();
+    model.session_detail_mut().unwrap().composer.set_text("x");
     update(
         &mut model,
         Msg::Key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL)),
@@ -247,7 +247,7 @@ fn ut_454_q_in_composer_is_text() {
     let mut model = Model::tail(SessionHeader::default());
     model.session_detail_mut().unwrap().composer.focused = true;
     assert!(update(&mut model, press(KeyCode::Char('q'))).is_empty());
-    assert_eq!(model.session_detail().unwrap().composer.text, "q");
+    assert_eq!(model.session_detail().unwrap().composer.text(), "q");
 }
 #[test]
 fn ut_420_ut_421_ut_422_ut_423_ut_424_header_states() {

@@ -114,6 +114,7 @@ pub enum Request {
         workspace: String,
         session: String,
         prompt: PromptRequest,
+        consume_body: bool,
     },
     CancelPrompt {
         id: RequestId,

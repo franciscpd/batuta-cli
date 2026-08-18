@@ -1,12 +1,15 @@
 pub mod attention;
 pub mod cards;
+pub mod chooser;
 pub mod clarify;
+pub mod composer;
 pub mod footer;
 pub mod header;
 pub mod layout;
 pub mod markdown;
 pub mod overlays;
 pub mod runs;
+pub mod session;
 pub mod sessions;
 pub mod tail;
 pub mod toast;
@@ -73,7 +76,7 @@ fn render_detail(model: &Model, frame: &mut Frame<'_>, area: ratatui::layout::Re
     let inner = block.inner(area);
     frame.render_widget(block, area);
     match &model.detail {
-        Detail::Session(_) => transcript::render(model, frame, inner),
+        Detail::Session(_) => session::render(model, frame, inner),
         Detail::Run(detail) => {
             let text = if detail.events.is_empty() {
                 "no run events".into()

@@ -9,7 +9,10 @@ use crate::{
     cmd::{Cmd, Request, RequestId, StreamId, TimerId},
     msg::{ApiResponse, ApiResult},
 };
-use compozy_client::{TaskVerb, types::Decision};
+use compozy_client::{
+    TaskVerb,
+    types::{Decision, PromptOutcome},
+};
 use std::time::Duration;
 
 pub(super) fn api(model: &mut Model, id: RequestId, result: ApiResult) -> Vec<Cmd> {
@@ -57,9 +60,16 @@ fn failure(model: &mut Model, request: Request, error: String) -> Vec<Cmd> {
             model.set_sticky_toast(text);
             Vec::new()
         }
-        Request::Prompt { .. } => {
+        Request::Prompt {
+            session, prompt, ..
+        } => {
             model.prompt_pending = false;
-            model.set_sticky_toast(error);
+            model.failed_prompt = Some((session.clone(), prompt.clone()));
+            model.set_sticky_toast(prompt_failure(&error));
+            Vec::new()
+        }
+        Request::CancelPrompt { .. } => {
+            model.set_sticky_toast(clean_error(&error));
             Vec::new()
         }
         Request::Approve {
@@ -84,6 +94,8 @@ fn failure(model: &mut Model, request: Request, error: String) -> Vec<Cmd> {
                 "clarification expired or already answered".into()
             } else if unavailable(&error) {
                 "clarification service unavailable".into()
+            } else if conflict(&error) {
+                clean_error(&error)
             } else {
                 error
             });
@@ -92,6 +104,10 @@ fn failure(model: &mut Model, request: Request, error: String) -> Vec<Cmd> {
         Request::TaskVerb { .. } => {
             model.set_sticky_toast(error);
             attention::refresh(model)
+        }
+        Request::RunControl { workspace, run, .. } | Request::RunApprove { workspace, run, .. } => {
+            model.set_sticky_toast(clean_error(&error));
+            refetch_run(model, workspace, run)
         }
         Request::Sessions { .. } => {
             model.set_sticky_toast(error);
@@ -150,7 +166,9 @@ fn apply(model: &mut Model, request: Request, response: ApiResponse) -> Vec<Cmd>
             sessions::apply(model, *page);
             attention::rebuild(model);
             model.dirty = true;
-            attention::refresh(model)
+            let mut commands = attention::refresh(model);
+            commands.extend(super::detail_session::reopen_if_active(model));
+            commands
         }
         (Request::Runs { .. }, ApiResponse::Runs(page)) => {
             runs::apply(model, *page);
@@ -231,17 +249,43 @@ fn apply(model: &mut Model, request: Request, response: ApiResponse) -> Vec<Cmd>
             }
             Vec::new()
         }
-        (Request::Prompt { session, .. }, ApiResponse::Prompt(_)) => {
+        (Request::Prompt { session, .. }, ApiResponse::Prompt(outcome)) => {
             model.prompt_pending = false;
+            model.failed_prompt = None;
             model.app_created_sessions.remove(&session);
+            let stopped = model
+                .session_detail()
+                .filter(|detail| detail.session.id == session)
+                .is_some_and(|detail| {
+                    detail.view.stopped || detail.stream == StreamStatus::Stopped
+                });
             if let Some(detail) = model
                 .session_detail_mut()
                 .filter(|detail| detail.session.id == session)
             {
-                detail.composer.text.clear();
-                detail.composer.cursor = 0;
+                detail.composer.clear();
+                detail.view.stopped = false;
+                detail.stream = StreamStatus::Live;
+                detail.session.state = "active".into();
             }
-            model.set_success_toast("sent")
+            let text = match outcome {
+                PromptOutcome::Sent => "sent".into(),
+                PromptOutcome::Accepted(result) => match result.delivery.as_str() {
+                    "steer" => "steering".into(),
+                    "interrupt_then_prompt" => "interrupting".into(),
+                    _ => result.queue_position.map_or_else(
+                        || "queued".into(),
+                        |position| format!("queued · position {position}"),
+                    ),
+                },
+            };
+            let mut commands = model.set_success_toast(text);
+            if stopped {
+                let stream = StreamId::Transcript(session);
+                model.active_streams.insert(stream.clone());
+                commands.push(Cmd::StartStream(stream));
+            }
+            commands
         }
         (Request::CreateSession { .. }, ApiResponse::SessionCreated(session)) => {
             created_session(model, session)
@@ -271,8 +315,61 @@ fn apply(model: &mut Model, request: Request, response: ApiResponse) -> Vec<Cmd>
             commands.extend(attention::refresh(model));
             commands
         }
+        (Request::CancelPrompt { .. }, ApiResponse::Empty) => {
+            model.set_success_toast("cancel requested")
+        }
         (_, _) => Vec::new(),
     }
+}
+
+fn clean_error(error: &str) -> String {
+    error
+        .strip_prefix("HTTP ")
+        .and_then(|rest| rest.split_once(": ").map(|(_, message)| message))
+        .unwrap_or(error)
+        .to_owned()
+}
+
+fn prompt_failure(error: &str) -> String {
+    let lower = error.to_lowercase();
+    if lower.contains("transport:") || lower.contains("timeout") {
+        return "request failed — check the session before retrying".into();
+    }
+    if lower.contains("413") {
+        let cap = lower
+            .split("queue_cap=")
+            .nth(1)
+            .and_then(|tail| tail.split(|c: char| !c.is_ascii_digit()).next())
+            .filter(|value| !value.is_empty())
+            .unwrap_or("?");
+        return format!("input queue full (cap {cap})");
+    }
+    if lower.contains("503") || lower.contains("draining") {
+        return "daemon is draining — writes refused".into();
+    }
+    if lower.contains("409")
+        && (lower.contains("active turn mismatch") || lower.contains("active_turn_mismatch"))
+    {
+        return "turn changed — check the session and send again".into();
+    }
+    if lower.contains("409") {
+        return format!(
+            "check the session — indeterminate dispatch ({})",
+            clean_error(error)
+        );
+    }
+    clean_error(error)
+}
+
+fn refetch_run(model: &mut Model, workspace: &str, run: &str) -> Vec<Cmd> {
+    let mut commands = runs::request(model).into_iter().collect::<Vec<_>>();
+    let request = model.allocate(|id| Request::Run {
+        id,
+        workspace: workspace.to_owned(),
+        run: run.to_owned(),
+    });
+    commands.push(Cmd::Get(request));
+    commands
 }
 
 fn created_session(model: &mut Model, session: compozy_client::types::Session) -> Vec<Cmd> {

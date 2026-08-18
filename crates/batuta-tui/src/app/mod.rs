@@ -1,3 +1,4 @@
+pub mod composer;
 pub mod model;
 pub mod panels;
 pub mod update;

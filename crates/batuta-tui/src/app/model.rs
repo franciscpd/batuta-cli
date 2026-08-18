@@ -1,4 +1,5 @@
 use crate::{
+    app::composer::ComposerState,
     cmd::{Cmd, LogScope, Request, RequestId, StreamId, TimerId},
     theme::Theme,
     transcript::TranscriptState,
@@ -224,22 +225,6 @@ pub enum FooterState {
     Fatal(String),
 }
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct ComposerState {
-    pub text: String,
-    pub cursor: usize,
-    pub focused: bool,
-}
-impl ComposerState {
-    pub fn is_empty(&self) -> bool {
-        self.text.is_empty()
-    }
-    pub fn insert(&mut self, c: char) {
-        self.text.insert(self.cursor, c);
-        self.cursor += c.len_utf8();
-    }
-}
-
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub enum StreamStatus {
     #[default]
     Live,
@@ -419,6 +404,7 @@ pub struct Model {
     pub catalog_debounce_armed: bool,
     pub create_session_pending: bool,
     pub prompt_pending: bool,
+    pub failed_prompt: Option<(String, compozy_client::types::PromptRequest)>,
     pub app_created_sessions: HashSet<String>,
     pub runs_unfiltered: Vec<RunRow>,
     pub runs_all_loops: bool,
@@ -473,6 +459,7 @@ impl Model {
             catalog_debounce_armed: false,
             create_session_pending: false,
             prompt_pending: false,
+            failed_prompt: None,
             app_created_sessions: HashSet::new(),
             runs_unfiltered: Vec::new(),
             runs_all_loops: false,

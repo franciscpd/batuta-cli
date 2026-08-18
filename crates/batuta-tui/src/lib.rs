@@ -1,4 +1,5 @@
 pub mod app;
+pub use app::composer;
 pub mod cmd;
 pub mod keymap;
 pub mod msg;

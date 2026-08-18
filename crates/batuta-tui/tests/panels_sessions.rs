@@ -282,7 +282,11 @@ fn ut_481_first_prompt_has_runtime_later_prompt_does_not() {
         _ => panic!(),
     };
     respond(&mut model, create, ApiResponse::SessionCreated(created()));
-    model.session_detail_mut().unwrap().composer.text = "hello".into();
+    model
+        .session_detail_mut()
+        .unwrap()
+        .composer
+        .set_text("hello");
     let prompt = match update(&mut model, key(KeyCode::Enter)).remove(0) {
         Cmd::Post(request) => request,
         _ => panic!(),
@@ -298,7 +302,11 @@ fn ut_481_first_prompt_has_runtime_later_prompt_does_not() {
             result: Ok(ApiResponse::Prompt(PromptOutcome::Sent)),
         },
     );
-    model.session_detail_mut().unwrap().composer.text = "again".into();
+    model
+        .session_detail_mut()
+        .unwrap()
+        .composer
+        .set_text("again");
     let prompt = match update(&mut model, key(KeyCode::Enter)).remove(0) {
         Cmd::Post(request) => request,
         _ => panic!(),
@@ -359,7 +367,11 @@ fn ut_485_empty_provider_blocks_first_prompt() {
     model.settings.preset.provider.clear();
     model.detail = Detail::Session(Box::new(batuta_tui::app::SessionDetail::new(created())));
     model.app_created_sessions.insert("sess-created".into());
-    model.session_detail_mut().unwrap().composer.text = "hello".into();
+    model
+        .session_detail_mut()
+        .unwrap()
+        .composer
+        .set_text("hello");
     model.session_detail_mut().unwrap().composer.focused = true;
     assert!(update(&mut model, key(KeyCode::Enter)).is_empty());
     assert_eq!(model.toast.unwrap().text, "set preset.provider in config");

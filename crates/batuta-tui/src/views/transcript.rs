@@ -23,7 +23,10 @@ pub fn render(model: &Model, frame: &mut Frame<'_>, area: Rect) {
     let Some(detail) = model.session_detail() else {
         return;
     };
-    if detail.transcript.is_empty() {
+    if detail.transcript.is_empty()
+        && detail.transcript.markers.is_empty()
+        && detail.view.warning.is_none()
+    {
         frame.render_widget(
             Paragraph::new("no transcript yet").style(model.theme.muted),
             area,

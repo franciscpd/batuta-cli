@@ -39,11 +39,18 @@ pub(super) fn key(model: &mut Model, key: KeyEvent) -> Vec<Cmd> {
         model.dirty = true;
         return Vec::new();
     }
-    if model.text_field_focused() {
-        return text_key(model, key);
+    if key.modifiers.contains(KeyModifiers::CONTROL)
+        && key.code == KeyCode::Char('x')
+        && model.focus == Panel::Detail
+        && model.session_detail().is_some()
+    {
+        return super::detail_session::cancel_key(model);
     }
     if chooser_or_confirm(model) {
         return chooser_key(model, key);
+    }
+    if model.text_field_focused() {
+        return text_key(model, key);
     }
     if key.code == KeyCode::F(1) || key.code == KeyCode::Char('?') {
         model.overlay = Some(Overlay::Help { scroll: 0 });
@@ -304,13 +311,19 @@ fn detail_key(model: &mut Model, key: KeyEvent) -> Vec<Cmd> {
         }
         KeyCode::Char('i') => detail.composer.focused = true,
         KeyCode::Enter => {
-            if let Some(entry) = detail.transcript.entries().get(detail.view.selection)
-                && entry_has_expandable_part(entry)
-                && !detail.view.expanded.remove(&entry.start_sequence)
+            if let Some(entry) = detail
+                .transcript
+                .entries()
+                .get(detail.view.selection)
+                .filter(|entry| entry_has_expandable_part(entry))
             {
-                detail.view.expanded.insert(entry.start_sequence);
+                if !detail.view.expanded.remove(&entry.start_sequence) {
+                    detail.view.expanded.insert(entry.start_sequence);
+                }
+                detail.view.cache_dirty = true;
+            } else {
+                detail.composer.focused = true;
             }
-            detail.view.cache_dirty = true;
         }
         KeyCode::Esc => return Vec::new(),
         _ => return Vec::new(),
@@ -387,32 +400,7 @@ fn text_key(model: &mut Model, key: KeyEvent) -> Vec<Cmd> {
         model.dirty = true;
         return Vec::new();
     }
-    let Some(detail) = model.session_detail_mut() else {
-        return Vec::new();
-    };
-    match key.code {
-        KeyCode::Esc => detail.composer.focused = false,
-        KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-            detail.composer.text.clear();
-            detail.composer.cursor = 0;
-        }
-        KeyCode::Char(c) => detail.composer.insert(c),
-        KeyCode::Backspace => {
-            detail.composer.text.pop();
-            detail.composer.cursor = detail.composer.text.len();
-        }
-        KeyCode::Enter
-            if key
-                .modifiers
-                .intersects(KeyModifiers::ALT | KeyModifiers::SHIFT) =>
-        {
-            detail.composer.insert('\n')
-        }
-        KeyCode::Enter => return super::sessions::send_prompt(model),
-        _ => {}
-    }
-    model.dirty = true;
-    Vec::new()
+    super::composer::key(model, key)
 }
 
 fn overlay_key(model: &mut Model, key: KeyEvent) -> Vec<Cmd> {
@@ -468,6 +456,28 @@ fn chooser_key(model: &mut Model, key: KeyEvent) -> Vec<Cmd> {
             KeyCode::Enter => super::attention::confirm_inline(model),
             KeyCode::Esc => {
                 super::attention::cancel_confirm(model);
+                Vec::new()
+            }
+            _ => Vec::new(),
+        };
+    }
+    if model
+        .session_detail()
+        .is_some_and(|detail| detail.chooser.is_some())
+    {
+        return super::prompt::chooser_key(model, key);
+    }
+    if model.session_detail().is_some_and(|detail| {
+        detail
+            .confirm
+            .as_ref()
+            .is_some_and(|confirm| confirm.prompt.starts_with("cancel the current turn"))
+    }) {
+        return match key.code {
+            KeyCode::Enter => super::detail_session::confirm_cancel(model),
+            KeyCode::Esc => {
+                model.session_detail_mut().unwrap().confirm = None;
+                model.dirty = true;
                 Vec::new()
             }
             _ => Vec::new(),

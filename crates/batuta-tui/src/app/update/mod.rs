@@ -1,7 +1,10 @@
 mod api;
 mod attention;
 mod clarify;
+mod composer;
+mod detail_session;
 mod keys;
+mod prompt;
 mod runs;
 mod sessions;
 mod stream;

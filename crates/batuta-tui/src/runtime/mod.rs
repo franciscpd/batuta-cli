@@ -145,7 +145,7 @@ impl RuntimeClient for Client {
                     .map(ApiResponse::Clarifications),
                 _ => return Err("write request passed to get".into()),
             }
-            .map_err(|error| error.to_string())
+            .map_err(api_error_text)
         })
     }
     fn post(&self, request: Request) -> BoxFuture<'static, ApiResult> {
@@ -222,7 +222,7 @@ impl RuntimeClient for Client {
                     .map(|()| ApiResponse::Empty),
                 _ => return Err("read request passed to post".into()),
             }
-            .map_err(|error| error.to_string())
+            .map_err(api_error_text)
         })
     }
     fn stream(
@@ -231,6 +231,31 @@ impl RuntimeClient for Client {
         cursor: watch::Receiver<String>,
     ) -> BoxStream<'static, AnyStreamEvent> {
         client_stream(self.clone(), String::new(), id, cursor)
+    }
+}
+
+fn api_error_text(error: compozy_client::Error) -> String {
+    match error {
+        compozy_client::Error::Daemon {
+            status,
+            message,
+            code,
+            details,
+        } => {
+            let suffix = code.map(|value| format!(" ({value})")).unwrap_or_default();
+            let queue_cap = if status == 413 {
+                details
+                    .as_ref()
+                    .and_then(|value| value.get("queue_cap"))
+                    .and_then(serde_json::Value::as_u64)
+                    .map(|value| format!("; queue_cap={value}"))
+                    .unwrap_or_default()
+            } else {
+                String::new()
+            };
+            format!("HTTP {status}: {message}{suffix}{queue_cap}")
+        }
+        error => error.to_string(),
     }
 }
 
@@ -792,5 +817,18 @@ mod tests {
         assert_eq!(render_interval(10), Duration::from_millis(100));
         assert_eq!(render_interval(1), Duration::from_millis(200));
         assert_eq!(render_interval(100), Duration::from_nanos(16_666_667));
+    }
+
+    #[test]
+    fn daemon_api_errors_retain_status_and_code_for_ui_mapping() {
+        assert_eq!(
+            api_error_text(compozy_client::Error::Daemon {
+                status: 413,
+                message: "input queue full".into(),
+                code: Some("queue_full".into()),
+                details: Some(serde_json::json!({"queue_cap": 10})),
+            }),
+            "HTTP 413: input queue full (queue_full); queue_cap=10"
+        );
     }
 }
