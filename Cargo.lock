@@ -186,6 +186,7 @@ dependencies = [
  "compozy-testkit",
  "crossterm",
  "futures-util",
+ "libc",
  "predicates",
  "ratatui",
  "semver",
