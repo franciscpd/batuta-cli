@@ -17,6 +17,9 @@ pub(super) fn create(model: &mut Model) -> Vec<Cmd> {
     if model.create_session_pending {
         return Vec::new();
     }
+    if model.refuse_write("start session") {
+        return Vec::new();
+    }
     let Some(workspace) = model.workspace.as_ref().map(|value| value.id.clone()) else {
         return Vec::new();
     };

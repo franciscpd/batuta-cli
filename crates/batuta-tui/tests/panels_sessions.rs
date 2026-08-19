@@ -212,7 +212,7 @@ fn ut_472_other_workspace_event_is_ignored() {
 }
 
 #[test]
-fn ut_473_catalog_503_falls_back_to_polling() {
+fn ut_473_catalog_503_falls_through_to_generic_retry_handling() {
     let mut model = model();
     model.active_streams.insert(StreamId::Catalog);
     let commands = update(
@@ -227,11 +227,9 @@ fn ut_473_catalog_503_falls_back_to_polling() {
             })),
         },
     );
-    assert_eq!(
-        commands,
-        vec![Cmd::After(Duration::from_secs(10), TimerId::CatalogPoll)]
-    );
-    assert!(render(&model, 100, 30).contains("catalog: polling"));
+    assert!(commands.is_empty());
+    assert!(!render(&model, 100, 30).contains("catalog: polling"));
+    assert!(render(&model, 100, 30).contains("catalog: stale"));
 }
 
 #[test]

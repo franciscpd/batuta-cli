@@ -115,20 +115,27 @@ async fn ut_322_catalog_event_ignores_ready_comment() {
     );
 }
 
-#[tokio::test]
-async fn ut_323_catalog_503_is_fatal() {
-    let server = SseServer::start(vec![ResponseSpec::status(
-        503,
-        r#"{"error":"unavailable"}"#,
-    )])
+#[tokio::test(start_paused = true)]
+async fn ut_323_catalog_503_retries_with_backoff() {
+    let server = SseServer::start(vec![
+        ResponseSpec::status(503, r#"{"error":"unavailable"}"#),
+        ResponseSpec::sse("event: session_catalog_changed\ndata: {\"kind\":\"upserted\",\"workspace_id\":\"ws\",\"session_id\":\"s\"}\n\n"),
+    ])
     .await;
     let (_, rx) = watch::channel(NoCursor);
     let stream = Client::tcp(server.address()).catalog_stream(rx, policy());
     pin_mut!(stream);
     assert!(matches!(
         stream.next().await,
-        Some(StreamEvent::Fatal(Error::Daemon { status: 503, .. }))
+        Some(StreamEvent::Lost { .. })
     ));
+    assert!(matches!(
+        stream.next().await,
+        Some(StreamEvent::Reconnected)
+    ));
+    assert!(
+        matches!(stream.next().await, Some(StreamEvent::Event(ref event)) if event.kind == "upserted")
+    );
 }
 
 #[tokio::test(start_paused = true)]

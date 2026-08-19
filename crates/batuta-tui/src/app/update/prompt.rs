@@ -91,6 +91,9 @@ pub(super) fn chooser_key(model: &mut Model, key: KeyEvent) -> Vec<Cmd> {
 }
 
 fn post(model: &mut Model, mode: PromptMode) -> Vec<Cmd> {
+    if model.refuse_write("send prompt") {
+        return Vec::new();
+    }
     let Some(workspace) = model.workspace.as_ref().map(|value| value.id.clone()) else {
         return Vec::new();
     };

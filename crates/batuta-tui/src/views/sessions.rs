@@ -77,10 +77,7 @@ pub fn render(model: &Model, frame: &mut Frame<'_>, area: Rect, offline: bool) {
             model.theme.muted,
         ));
     }
-    if model.catalog_polling {
-        text.lines
-            .push(Line::styled("catalog: polling", model.theme.muted));
-    } else if matches!(
+    if matches!(
         model.stream_status.get(&StreamId::Catalog),
         Some(crate::app::StreamStatus::Stale | crate::app::StreamStatus::Fatal(_))
     ) {

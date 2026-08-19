@@ -1,15 +1,8 @@
-use crate::app::{Model, StreamStatus};
+use crate::app::{DaemonState, Model};
 use ratatui::{Frame, layout::Rect, widgets::Paragraph};
 
 pub fn offline(model: &Model) -> bool {
-    !model.daemon.poll_ok
-        && !model.active_streams.is_empty()
-        && model.active_streams.iter().all(|id| {
-            matches!(
-                model.stream_status.get(id),
-                Some(StreamStatus::Stale | StreamStatus::Fatal(_))
-            )
-        })
+    model.is_offline()
 }
 pub fn has_banner(model: &Model) -> bool {
     let Some(version) = model.daemon.version.as_deref() else {
@@ -29,14 +22,13 @@ pub fn text(model: &Model, width: u16) -> String {
         .as_ref()
         .map(|value| value.name.as_str())
         .unwrap_or("none");
-    let status = if offline(model) {
-        "offline"
-    } else if model.daemon.status == "draining" {
-        "draining"
-    } else {
-        "running"
+    let state = model.daemon_state();
+    let status = match state {
+        DaemonState::Offline => "offline",
+        DaemonState::Draining => "draining — finishing in-flight work, writes refused",
+        DaemonState::Connected => "running",
     };
-    let version = if status == "offline" {
+    let version = if state == DaemonState::Offline {
         String::new()
     } else {
         model
@@ -70,8 +62,13 @@ pub fn text(model: &Model, width: u16) -> String {
 }
 pub fn render(model: &Model, frame: &mut Frame<'_>, area: Rect) {
     let line = text(model, area.width);
+    let style = match model.daemon_state() {
+        DaemonState::Draining => model.theme.warning,
+        DaemonState::Offline => model.theme.error,
+        DaemonState::Connected => model.theme.emphasis,
+    };
     frame.render_widget(
-        Paragraph::new(line).style(model.theme.emphasis),
+        Paragraph::new(line).style(style),
         Rect { height: 1, ..area },
     );
     if area.height > 1 {

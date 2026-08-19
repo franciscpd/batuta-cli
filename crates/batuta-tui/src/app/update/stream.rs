@@ -59,20 +59,6 @@ pub(super) fn stream(model: &mut Model, id: StreamId, event: AnyStreamEvent) -> 
                 )]
             }
         }
-        (
-            StreamId::Catalog,
-            AnyStreamEvent::Catalog(StreamEvent::Fatal(Error::Daemon { status: 503, .. })),
-        ) => {
-            model.catalog_polling = true;
-            vec![Cmd::After(
-                std::time::Duration::from_secs(10),
-                crate::cmd::TimerId::CatalogPoll,
-            )]
-        }
-        (StreamId::Catalog, AnyStreamEvent::Catalog(StreamEvent::Reconnected)) => {
-            model.catalog_polling = false;
-            Vec::new()
-        }
         (StreamId::RunEvents(run), AnyStreamEvent::Run(StreamEvent::Event(event))) => {
             let seq = event.seq;
             let mut terminal = false;

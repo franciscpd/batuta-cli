@@ -29,6 +29,9 @@ pub(super) fn confirm_cancel(model: &mut Model) -> Vec<Cmd> {
     else {
         return Vec::new();
     };
+    if model.refuse_write("cancel turn") {
+        return Vec::new();
+    }
     model.session_detail_mut().unwrap().confirm = None;
     let request = model.allocate(|id| Request::CancelPrompt {
         id,

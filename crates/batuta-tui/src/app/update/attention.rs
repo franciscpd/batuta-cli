@@ -110,6 +110,13 @@ pub(super) fn confirm_inline(model: &mut Model) -> Vec<Cmd> {
 }
 
 fn post_approve(model: &mut Model, session: String, request: ApproveRequest) -> Vec<Cmd> {
+    let verb = match request.decision {
+        Decision::AllowOnce | Decision::AllowAlways => "approve",
+        Decision::RejectOnce | Decision::RejectAlways => "reject",
+    };
+    if model.refuse_write(verb) {
+        return Vec::new();
+    }
     let Some(workspace) = model.workspace.as_ref().map(|value| value.id.clone()) else {
         return Vec::new();
     };
@@ -143,6 +150,13 @@ fn verb(model: &mut Model, decision: Decision) -> Vec<Cmd> {
             allow_always,
         }) => {
             if matches!(decision, Decision::AllowAlways | Decision::RejectAlways) && !allow_always {
+                return Vec::new();
+            }
+            let verb = match decision {
+                Decision::AllowOnce | Decision::AllowAlways => "approve",
+                Decision::RejectOnce | Decision::RejectAlways => "reject",
+            };
+            if model.refuse_write(verb) {
                 return Vec::new();
             }
             let Some(workspace) = model.workspace.as_ref().map(|value| value.id.clone()) else {
@@ -193,6 +207,9 @@ fn task_verb(model: &mut Model, verb: TaskVerb) -> Vec<Cmd> {
     };
     if !actions.iter().any(|action| action == wire) || (verb == TaskVerb::Retry && run_id.is_none())
     {
+        return Vec::new();
+    }
+    if model.refuse_write(wire) {
         return Vec::new();
     }
     let Some(workspace) = model.workspace.as_ref().map(|value| value.id.clone()) else {

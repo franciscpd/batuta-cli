@@ -24,8 +24,22 @@ impl Client {
         cursor: watch::Receiver<NoCursor>,
         policy: ReconnectPolicy,
     ) -> impl Stream<Item = StreamEvent<CatalogEvent>> + Send + 'static {
-        let mut request = StreamRequest::new("/api/sessions/catalog-stream", "catalog stream");
-        request.retry_server_errors = false;
-        EventStream::open(self.clone(), request, cursor, policy, map)
+        EventStream::open(self.clone(), catalog_stream_request(), cursor, policy, map)
+    }
+}
+
+fn catalog_stream_request() -> StreamRequest {
+    let mut request = StreamRequest::new("/api/sessions/catalog-stream", "catalog stream");
+    request.retry_server_errors = true;
+    request
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ut_009_catalog_stream_request_retries_server_errors() {
+        assert!(catalog_stream_request().retry_server_errors);
     }
 }

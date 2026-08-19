@@ -59,18 +59,6 @@ pub(super) fn timer(model: &mut Model, id: TimerId) -> Vec<Cmd> {
             commands.extend(super::attention::refresh(model));
             commands
         }
-        TimerId::CatalogPoll => {
-            if !model.catalog_polling {
-                return Vec::new();
-            }
-            let mut commands = super::sessions::refresh(model);
-            commands.extend(super::attention::refresh(model));
-            commands.push(Cmd::After(
-                std::time::Duration::from_secs(10),
-                TimerId::CatalogPoll,
-            ));
-            commands
-        }
         TimerId::RunsPoll => super::runs::refresh(model),
     }
 }
