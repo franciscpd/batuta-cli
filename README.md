@@ -101,6 +101,6 @@ resolved config path and whether it was loaded.
 
 Read the design and developer-experience contracts in
 [`docs/internal/specs/2026-08-17-batuta-cli-design.md`](docs/internal/specs/2026-08-17-batuta-cli-design.md)
-and [`.compozy/tasks/mvp-tui/_dx.md`](.compozy/tasks/mvp-tui/_dx.md) before
-changing the application. Run the workspace checks relevant to your change;
-changes reach `main` through pull requests.
+and [`CONTRIBUTING.md`](CONTRIBUTING.md) before changing the application. Run
+the workspace checks relevant to your change; changes reach `main` through
+pull requests.
