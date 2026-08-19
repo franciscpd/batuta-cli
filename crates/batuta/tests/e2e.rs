@@ -3,9 +3,13 @@ use compozy_testkit::{Daemon, DaemonOptions, StartOutcome};
 use predicates::prelude::*;
 use std::{
     io::{Read, Write},
-    net::TcpListener,
+    net::{SocketAddr, TcpListener, TcpStream},
     process::{Child, Command as ProcessCommand, Stdio},
-    sync::{Arc, Mutex, OnceLock},
+    sync::{
+        Arc, Barrier, Mutex, OnceLock,
+        atomic::{AtomicBool, Ordering},
+        mpsc::{Receiver, SyncSender, sync_channel},
+    },
     thread::JoinHandle,
     time::{Duration, Instant},
 };
@@ -84,6 +88,9 @@ const PTY_ROWS: u16 = 40;
 const PTY_CLEANUP_TIMEOUT: Duration = Duration::from_secs(5);
 
 #[cfg(unix)]
+const PTY_QUIT_GRACE: Duration = Duration::from_millis(250);
+
+#[cfg(unix)]
 fn retry_screen_process(tcp_addr: &str) -> RetryScreen {
     RetryScreen::start(tcp_addr)
 }
@@ -100,6 +107,113 @@ struct RetryScreen {
     child: Child,
     output: Arc<Mutex<Vec<u8>>>,
     readers: Vec<JoinHandle<()>>,
+}
+
+#[cfg(unix)]
+struct ProbeGate {
+    addr: String,
+    first_request: Receiver<()>,
+    release_first: Mutex<Option<SyncSender<()>>>,
+    stopped: Arc<AtomicBool>,
+    thread: Option<JoinHandle<()>>,
+}
+
+#[cfg(unix)]
+impl ProbeGate {
+    fn start(upstream: SocketAddr) -> Self {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind startup probe gate");
+        listener
+            .set_nonblocking(true)
+            .expect("set startup probe gate nonblocking");
+        let addr = listener.local_addr().expect("read startup probe gate addr");
+        let (first_request_tx, first_request) = sync_channel(1);
+        let (release_first, release_first_rx) = sync_channel(0);
+        let stopped = Arc::new(AtomicBool::new(false));
+        let thread = std::thread::spawn({
+            let stopped = stopped.clone();
+            move || {
+                let mut first = Some((first_request_tx, release_first_rx));
+                while !stopped.load(Ordering::SeqCst) {
+                    match listener.accept() {
+                        Ok((client, _)) => {
+                            let gate = first.take();
+                            std::thread::spawn(move || {
+                                let _ = forward_probe(client, upstream, gate);
+                            });
+                        }
+                        Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                            std::thread::sleep(Duration::from_millis(10));
+                        }
+                        Err(_) => break,
+                    }
+                }
+            }
+        });
+        Self {
+            addr: addr.to_string(),
+            first_request,
+            release_first: Mutex::new(Some(release_first)),
+            stopped,
+            thread: Some(thread),
+        }
+    }
+
+    fn addr(&self) -> &str {
+        &self.addr
+    }
+
+    fn wait_for_first_request(&self, timeout: Duration) {
+        self.first_request
+            .recv_timeout(timeout)
+            .expect("startup probe did not reach the controlled gate");
+    }
+
+    fn release_first(&self) {
+        if let Some(release) = self.release_first.lock().expect("probe gate lock").take() {
+            let _ = release.send(());
+        }
+    }
+}
+
+#[cfg(unix)]
+impl Drop for ProbeGate {
+    fn drop(&mut self) {
+        self.release_first();
+        self.stopped.store(true, Ordering::SeqCst);
+        let _ = TcpStream::connect(&self.addr);
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
+    }
+}
+
+#[cfg(unix)]
+fn forward_probe(
+    mut client: TcpStream,
+    upstream: SocketAddr,
+    gate: Option<(SyncSender<()>, Receiver<()>)>,
+) -> std::io::Result<()> {
+    client.set_read_timeout(Some(PTY_CLEANUP_TIMEOUT))?;
+    let mut request = Vec::with_capacity(4096);
+    loop {
+        let mut buffer = [0_u8; 4096];
+        let read = client.read(&mut buffer)?;
+        if read == 0 {
+            return Ok(());
+        }
+        request.extend_from_slice(&buffer[..read]);
+        if request.windows(4).any(|bytes| bytes == b"\r\n\r\n") {
+            break;
+        }
+    }
+    if let Some((reached, release)) = gate {
+        let _ = reached.send(());
+        let _ = release.recv();
+    }
+    let mut upstream = TcpStream::connect(upstream)?;
+    upstream.write_all(&request)?;
+    std::io::copy(&mut upstream, &mut client)?;
+    Ok(())
 }
 
 #[cfg(unix)]
@@ -158,7 +272,7 @@ impl RetryScreen {
         panic!("timed out waiting for {expected:?}\\n{}", self.text());
     }
 
-    fn quit(mut self) -> std::process::Output {
+    fn request_quit(&mut self) {
         self.child
             .stdin
             .as_mut()
@@ -172,6 +286,23 @@ impl RetryScreen {
                     .flush()
             })
             .expect("send retry-screen quit key");
+    }
+
+    fn quit(mut self) -> std::process::Output {
+        self.request_quit();
+        self.finish_after_quit_request()
+    }
+
+    fn finish_after_quit_request(mut self) -> std::process::Output {
+        if self.wait_for_exit(PTY_QUIT_GRACE).is_none() {
+            self.child
+                .stdin
+                .as_mut()
+                .expect("batuta stdin")
+                .write_all(b"\x03")
+                .and_then(|()| self.child.stdin.as_mut().expect("batuta stdin").flush())
+                .expect("send state-independent batuta quit key");
+        }
         self.finish_after(PTY_CLEANUP_TIMEOUT)
     }
 
@@ -1067,7 +1198,8 @@ fn it_001_daemon_starts_late_and_batuta_transitions_without_restart() {
     let tcp_addr = free_tcp_addr();
     let port = tcp_addr.parse::<std::net::SocketAddr>().unwrap().port();
     let child = retry_screen_process(&tcp_addr);
-    std::thread::sleep(Duration::from_secs(1));
+    child.wait_for_text("batuta — connecting", Duration::from_secs(5));
+    child.wait_for_text("attempt 1", Duration::from_secs(5));
     let daemon =
         match runtime().block_on(Daemon::start_with(DaemonOptions::default().http_port(port))) {
             Ok(StartOutcome::Started(daemon)) => daemon,
@@ -1082,8 +1214,6 @@ fn it_001_daemon_starts_late_and_batuta_transitions_without_restart() {
     let output = quit_retry_screen(child);
     let text = retry_screen_text(&output);
     assert!(output.status.success(), "{text}");
-    assert!(text.contains("batuta — connecting"), "{text}");
-    assert!(text.contains("attempt 1"), "{text}");
     assert!(text.contains("daemon"), "{text}");
     drop(daemon);
 }
@@ -1149,21 +1279,20 @@ fn it_003_daemon_flap_during_startup_stays_in_the_retry_screen() {
         );
         return;
     }
-    let tcp_addr = free_tcp_addr();
-    let port = tcp_addr.parse::<std::net::SocketAddr>().unwrap().port();
-    let daemon =
-        match runtime().block_on(Daemon::start_with(DaemonOptions::default().http_port(port))) {
-            Ok(StartOutcome::Started(daemon)) => daemon,
-            Ok(StartOutcome::Skip(reason)) => {
-                eprintln!("skipped: {reason}");
-                return;
-            }
-            Err(error) => panic!("start flapping daemon: {error}"),
-        };
-    let child = retry_screen_process(&tcp_addr);
-    std::thread::sleep(Duration::from_millis(100));
+    let daemon = match runtime().block_on(Daemon::start()) {
+        Ok(StartOutcome::Started(daemon)) => daemon,
+        Ok(StartOutcome::Skip(reason)) => {
+            eprintln!("skipped: {reason}");
+            return;
+        }
+        Err(error) => panic!("start flapping daemon: {error}"),
+    };
+    let gate = ProbeGate::start(daemon.tcp_addr());
+    let child = retry_screen_process(gate.addr());
+    gate.wait_for_first_request(Duration::from_secs(5));
     daemon.stop().expect("stop daemon during transition");
-    std::thread::sleep(Duration::from_secs(1));
+    gate.release_first();
+    child.wait_for_text("batuta — connecting", Duration::from_secs(5));
     let output = quit_retry_screen(child);
     let text = retry_screen_text(&output);
     assert!(output.status.success(), "{text}");
@@ -1179,22 +1308,55 @@ fn it_004_quit_wins_the_connect_race_without_starting_a_session() {
         );
         return;
     }
-    let tcp_addr = free_tcp_addr();
-    let port = tcp_addr.parse::<std::net::SocketAddr>().unwrap().port();
-    let child = retry_screen_process(&tcp_addr);
-    let output = quit_retry_screen(child);
-    let daemon =
-        match runtime().block_on(Daemon::start_with(DaemonOptions::default().http_port(port))) {
-            Ok(StartOutcome::Started(daemon)) => daemon,
-            Ok(StartOutcome::Skip(reason)) => {
-                eprintln!("skipped: {reason}");
-                return;
+    let daemon = match runtime().block_on(Daemon::start()) {
+        Ok(StartOutcome::Started(daemon)) => daemon,
+        Ok(StartOutcome::Skip(reason)) => {
+            eprintln!("skipped: {reason}");
+            return;
+        }
+        Err(error) => panic!("start raced daemon: {error}"),
+    };
+    daemon.request_log().clear();
+    let gate = ProbeGate::start(daemon.tcp_addr());
+    let mut child = retry_screen_process(gate.addr());
+    gate.wait_for_first_request(Duration::from_secs(5));
+    let start = Arc::new(Barrier::new(3));
+    let release = gate
+        .release_first
+        .lock()
+        .expect("probe gate lock")
+        .take()
+        .expect("first startup probe already released");
+    std::thread::scope(|scope| {
+        scope.spawn({
+            let start = start.clone();
+            move || {
+                start.wait();
+                let _ = release.send(());
             }
-            Err(error) => panic!("start raced daemon: {error}"),
-        };
+        });
+        scope.spawn({
+            let start = start.clone();
+            let child = &mut child;
+            move || {
+                start.wait();
+                child.request_quit();
+            }
+        });
+        start.wait();
+    });
+    let output = child.finish_after_quit_request();
     let text = retry_screen_text(&output);
     assert!(output.status.success(), "{text}");
-    assert!(daemon.request_log().entries().is_empty());
+    let requests = daemon.request_log().entries();
+    assert!(
+        !requests.is_empty(),
+        "the released startup probe was not observed"
+    );
+    assert!(
+        requests.iter().all(|(method, _)| method == "GET"),
+        "quit/connect race dispatched a daemon mutation: {requests:?}"
+    );
 }
 
 #[cfg(unix)]
