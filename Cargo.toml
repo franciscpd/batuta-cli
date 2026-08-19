@@ -12,6 +12,7 @@ edition = "2024"
 rust-version = "1.88"
 version = "0.1.0-beta.1"
 license = "MIT OR Apache-2.0"
+repository = "https://github.com/franciscpd/batuta-cli"
 
 [workspace.dependencies]
 bytes = "1"
@@ -43,3 +44,8 @@ unicode-width = "0.2"
 wiremock = "0.6.5"
 tempfile = "3"
 libc = "0.2"
+
+# The profile that 'dist' will build with
+[profile.dist]
+inherits = "release"
+lto = "thin"

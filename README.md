@@ -36,6 +36,12 @@ batuta tail
 
 Use `batuta doctor --json` and `batuta sessions --json` for scripting.
 
+# Releases
+
+Release binaries and checksum files are built for Linux and macOS after a
+human merges the standing release PR. Maintainers should follow
+[`docs/releasing.md`](docs/releasing.md), including the required PAT setup.
+
 # Config
 
 The optional user config is `$XDG_CONFIG_HOME/batuta/config.toml`, falling
