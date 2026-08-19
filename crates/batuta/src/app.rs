@@ -109,7 +109,10 @@ where
                             "terminal input closed during startup".into()
                         }
                         status = client.status() => match status {
-                            Ok(status) => return Ok((client, status)),
+                            Ok(status) => match startup_version_mismatch(&status) {
+                                Some(error) => error,
+                                None => return Ok((client, status)),
+                            },
                             Err(error) => format!("connection lost during startup — {error}"),
                         },
                     },
@@ -124,6 +127,21 @@ where
             }
         }
     }
+}
+
+fn startup_version_mismatch(status: &compozy_client::types::StatusPayload) -> Option<String> {
+    let value = status.daemon.version.as_deref()?.trim();
+    let daemon = semver::Version::parse(value.strip_prefix('v').unwrap_or(value)).ok()?;
+    let floor = semver::Version::parse(
+        version::MIN_COMPOZY_VERSION
+            .strip_prefix('v')
+            .unwrap_or(version::MIN_COMPOZY_VERSION),
+    )
+    .expect("valid minimum CompozyOS version");
+    if daemon >= floor {
+        return None;
+    }
+    version::check(Some(value)).map(|warning| format!("version mismatch — {warning}"))
 }
 
 async fn wait_or_quit(events: &mut EventStream) -> bool {
@@ -251,12 +269,33 @@ mod tests {
     }
 
     #[test]
-    fn ut_020_version_mismatch_text_is_distinct_from_connection_refused() {
-        let mismatch = version::check(Some("v0.2.0")).unwrap();
+    fn ut_020_startup_version_mismatch_retries_with_distinct_text() {
+        let status = compozy_client::types::StatusPayload {
+            daemon: compozy_client::types::DaemonStatus {
+                version: Some("v0.2.0".into()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let mismatch = startup_version_mismatch(&status).unwrap();
         let connection = render(1, "connection refused — uds /tmp/compozy/daemon.sock");
-        let version_mismatch = render(1, &format!("version mismatch — {mismatch}"));
+        let version_mismatch = render(1, &mismatch);
         assert_ne!(connection, version_mismatch);
         assert!(version_mismatch.contains("version mismatch"));
+    }
+
+    #[test]
+    fn startup_allows_supported_and_unverified_daemon_versions() {
+        for daemon_version in ["v0.3.0-beta.16", "v0.4.0", "dev", "garbage"] {
+            let status = compozy_client::types::StatusPayload {
+                daemon: compozy_client::types::DaemonStatus {
+                    version: Some(daemon_version.into()),
+                    ..Default::default()
+                },
+                ..Default::default()
+            };
+            assert_eq!(startup_version_mismatch(&status), None, "{daemon_version}");
+        }
     }
 
     #[test]
