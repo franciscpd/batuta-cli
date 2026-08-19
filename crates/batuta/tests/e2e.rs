@@ -1,6 +1,8 @@
 use assert_cmd::Command;
 use compozy_testkit::{Daemon, DaemonOptions, StartOutcome};
 use predicates::prelude::*;
+#[cfg(unix)]
+use std::os::unix::process::CommandExt;
 use std::{
     io::{Read, Write},
     net::{SocketAddr, TcpListener, TcpStream},
@@ -105,6 +107,7 @@ struct LiveTui {
 #[cfg(unix)]
 struct RetryScreen {
     child: Child,
+    batuta_pid_file: tempfile::NamedTempFile,
     output: Arc<Mutex<Vec<u8>>>,
     readers: Vec<JoinHandle<()>>,
 }
@@ -220,16 +223,21 @@ fn forward_probe(
 impl RetryScreen {
     fn start(tcp_addr: &str) -> Self {
         let binary = assert_cmd::cargo::cargo_bin("batuta");
+        let batuta_pid_file = tempfile::NamedTempFile::new().expect("create batuta PID file");
         let command = format!(
-            "stty cols {PTY_COLUMNS} rows {PTY_ROWS}; exec {} --daemon tcp --tcp-addr {tcp_addr}",
-            shell_quote(binary)
+            "stty cols {PTY_COLUMNS} rows {PTY_ROWS}; printf '%s' \"$$\" > {}; exec {} --daemon tcp --tcp-addr {tcp_addr}",
+            shell_quote(batuta_pid_file.path()),
+            shell_quote(binary),
         );
-        let mut child = ProcessCommand::new("script")
+        let mut process = ProcessCommand::new("script");
+        process
             .args(["-q", "-e", "-f", "-c", &command, "/dev/null"])
             .env("TERM", "xterm-256color")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
+            .process_group(0);
+        let mut child = process
             .spawn()
             .expect("start retry screen in a pseudo-terminal");
         let output = Arc::new(Mutex::new(Vec::new()));
@@ -252,6 +260,7 @@ impl RetryScreen {
         .collect();
         Self {
             child,
+            batuta_pid_file,
             output,
             readers,
         }
@@ -314,6 +323,13 @@ impl RetryScreen {
         self.finish_after(Duration::ZERO)
     }
 
+    fn batuta_pid(&self) -> u32 {
+        std::fs::read_to_string(self.batuta_pid_file.path())
+            .expect("read batuta PID file")
+            .parse()
+            .expect("parse batuta PID")
+    }
+
     fn finish_after(mut self, timeout: Duration) -> std::process::Output {
         let status = self
             .wait_for_exit(timeout)
@@ -341,6 +357,19 @@ impl RetryScreen {
     }
 
     fn terminate_and_reap(&mut self) -> std::process::ExitStatus {
+        let batuta_pid = self.batuta_pid() as i32;
+        let process_group = self.child.id() as i32;
+        for target in [-process_group, batuta_pid] {
+            let result = unsafe { libc::kill(target, libc::SIGKILL) };
+            if result != 0 {
+                let error = std::io::Error::last_os_error();
+                assert_eq!(
+                    error.raw_os_error(),
+                    Some(libc::ESRCH),
+                    "terminate stuck retry-screen process target {target}: {error}"
+                );
+            }
+        }
         if let Err(error) = self.child.kill() {
             assert_eq!(
                 error.kind(),
@@ -356,6 +385,21 @@ impl RetryScreen {
 impl Drop for RetryScreen {
     fn drop(&mut self) {
         if self.child.try_wait().ok().flatten().is_none() {
+            if let Ok(pid) =
+                std::fs::read_to_string(self.batuta_pid_file.path()).and_then(|value| {
+                    value
+                        .parse::<i32>()
+                        .map_err(|error| std::io::Error::other(error.to_string()))
+                })
+            {
+                unsafe {
+                    libc::kill(pid, libc::SIGKILL);
+                }
+            }
+            let process_group = self.child.id() as i32;
+            unsafe {
+                libc::kill(-process_group, libc::SIGKILL);
+            }
             let _ = self.child.kill();
             let _ = self.child.wait();
         }
@@ -373,6 +417,21 @@ fn quit_retry_screen(child: RetryScreen) -> std::process::Output {
 #[cfg(unix)]
 fn retry_screen_text(output: &std::process::Output) -> String {
     terminal_text(&[&output.stdout[..], &output.stderr[..]].concat())
+}
+
+#[cfg(unix)]
+fn process_exists(pid: u32) -> bool {
+    let result = unsafe { libc::kill(pid as i32, 0) };
+    result == 0 || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
+}
+
+#[cfg(unix)]
+fn wait_for_process_exit(pid: u32, timeout: Duration) {
+    let deadline = Instant::now() + timeout;
+    while process_exists(pid) && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(25));
+    }
+    assert!(!process_exists(pid), "process {pid} survived PTY cleanup");
 }
 
 #[cfg(unix)]
@@ -1277,8 +1336,10 @@ fn it_023_retry_screen_pty_output_and_cleanup_are_bounded() {
 
     let child = retry_screen_process("127.0.0.1:1");
     child.wait_for_text("attempt 1", Duration::from_secs(5));
+    let batuta_pid = child.batuta_pid();
     let started = Instant::now();
     let output = child.force_cleanup();
+    wait_for_process_exit(batuta_pid, PTY_CLEANUP_TIMEOUT);
     assert!(
         started.elapsed() <= PTY_CLEANUP_TIMEOUT,
         "forced retry-screen cleanup exceeded {PTY_CLEANUP_TIMEOUT:?}"
@@ -1402,6 +1463,19 @@ fn e2e_003_draining_journey_runs_the_live_batuta_process() {
         &format!("/api/workspaces/{}/loop-runs", daemon.workspace_id()),
         1,
         Duration::from_secs(5),
+    );
+    let reads_screen = tui.wait_for_screen(Duration::from_secs(5), |screen| {
+        screen.lines().any(|line| line.contains("batuta  —"))
+            && screen.contains("[2] Deliver runs · batuta-deliver")
+            && screen.contains("no runs for batuta-deliver — press * for all")
+    });
+    assert!(
+        reads_screen.lines().any(|line| line.contains("batuta  —")),
+        "created session was not rendered while draining: {reads_screen:?}"
+    );
+    assert!(
+        reads_screen.contains("no runs for batuta-deliver — press * for all"),
+        "runs did not render their normal empty state while draining: {reads_screen:?}"
     );
 
     tui.send(b"L");
