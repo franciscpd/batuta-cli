@@ -325,6 +325,51 @@ fn ut_601_selected_gate_posts_approve_and_reject() {
 }
 
 #[test]
+fn run_kill_confirmation_rechecks_draining_before_dispatch() {
+    let mut model = loaded(1, "running");
+    assert!(update(&mut model, key(KeyCode::Char('k'))).is_empty());
+
+    model.daemon.status = "draining".into();
+    let commands = update(&mut model, key(KeyCode::Enter));
+
+    assert!(commands.iter().all(|cmd| !matches!(cmd, Cmd::Post(_))));
+    assert_eq!(
+        model.toast.as_ref().map(|toast| toast.text.as_str()),
+        Some("can't kill run — daemon draining, try again once it recovers")
+    );
+    let Detail::Run(detail) = &model.detail else {
+        panic!()
+    };
+    assert_eq!(detail.confirm, None);
+}
+
+#[test]
+fn run_gate_decisions_are_refused_while_draining() {
+    for (key_code, verb) in [('a', "approve"), ('x', "reject")] {
+        let mut model = loaded(1, "running");
+        send(
+            &mut model,
+            event(
+                20,
+                "needs_approval",
+                serde_json::json!({"gate_id":"gate-x","revision":3}),
+            ),
+        );
+        update(&mut model, key(KeyCode::Char('G')));
+        model.daemon.status = "draining".into();
+
+        let commands = update(&mut model, key(KeyCode::Char(key_code)));
+
+        assert!(commands.iter().all(|cmd| !matches!(cmd, Cmd::Post(_))));
+        let expected = format!("can't {verb} — daemon draining, try again once it recovers");
+        assert_eq!(
+            model.toast.as_ref().map(|toast| toast.text.as_str()),
+            Some(expected.as_str())
+        );
+    }
+}
+
+#[test]
 fn ut_602_control_results_toast_and_refetch_both_surfaces() {
     for (control, toast) in [
         (RunControl::Pause, "paused"),
