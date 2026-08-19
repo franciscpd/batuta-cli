@@ -75,40 +75,17 @@ fn shell_quote(value: impl AsRef<std::path::Path>) -> String {
 }
 
 #[cfg(unix)]
-fn retry_screen_process(tcp_addr: &str) -> Child {
-    let binary = assert_cmd::cargo::cargo_bin("batuta");
-    let command = format!(
-        "exec {} --daemon tcp --tcp-addr {tcp_addr}",
-        shell_quote(binary)
-    );
-    ProcessCommand::new("script")
-        .args(["-q", "-e", "-c", &command, "/dev/null"])
-        .env("TERM", "xterm-256color")
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .expect("start retry screen in a pseudo-terminal")
-}
+const PTY_COLUMNS: u16 = 120;
 
 #[cfg(unix)]
-fn quit_retry_screen(mut child: Child) -> std::process::Output {
-    child
-        .stdin
-        .as_mut()
-        .expect("retry screen stdin")
-        .write_all(b"q")
-        .expect("send retry-screen quit key");
-    child.wait_with_output().expect("wait for retry screen")
-}
+const PTY_ROWS: u16 = 40;
 
 #[cfg(unix)]
-fn output_text(output: &std::process::Output) -> String {
-    format!(
-        "{}{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    )
+const PTY_CLEANUP_TIMEOUT: Duration = Duration::from_secs(5);
+
+#[cfg(unix)]
+fn retry_screen_process(tcp_addr: &str) -> RetryScreen {
+    RetryScreen::start(tcp_addr)
 }
 
 #[cfg(unix)]
@@ -116,6 +93,227 @@ struct LiveTui {
     child: Child,
     output: Arc<Mutex<Vec<u8>>>,
     readers: Vec<JoinHandle<()>>,
+}
+
+#[cfg(unix)]
+struct RetryScreen {
+    child: Child,
+    output: Arc<Mutex<Vec<u8>>>,
+    readers: Vec<JoinHandle<()>>,
+}
+
+#[cfg(unix)]
+impl RetryScreen {
+    fn start(tcp_addr: &str) -> Self {
+        let binary = assert_cmd::cargo::cargo_bin("batuta");
+        let command = format!(
+            "stty cols {PTY_COLUMNS} rows {PTY_ROWS}; exec {} --daemon tcp --tcp-addr {tcp_addr}",
+            shell_quote(binary)
+        );
+        let mut child = ProcessCommand::new("script")
+            .args(["-q", "-e", "-f", "-c", &command, "/dev/null"])
+            .env("TERM", "xterm-256color")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("start retry screen in a pseudo-terminal");
+        let output = Arc::new(Mutex::new(Vec::new()));
+        let readers = [
+            child.stdout.take().map(|stream| {
+                std::thread::spawn({
+                    let output = output.clone();
+                    move || capture(stream, output)
+                })
+            }),
+            child.stderr.take().map(|stream| {
+                std::thread::spawn({
+                    let output = output.clone();
+                    move || capture(stream, output)
+                })
+            }),
+        ]
+        .into_iter()
+        .flatten()
+        .collect();
+        Self {
+            child,
+            output,
+            readers,
+        }
+    }
+
+    fn text(&self) -> String {
+        terminal_text(&self.output.lock().expect("output lock"))
+    }
+
+    fn wait_for_text(&self, expected: &str, timeout: Duration) {
+        let deadline = Instant::now() + timeout;
+        while Instant::now() < deadline {
+            if self.text().contains(expected) {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(25));
+        }
+        panic!("timed out waiting for {expected:?}\\n{}", self.text());
+    }
+
+    fn quit(mut self) -> std::process::Output {
+        self.child
+            .stdin
+            .as_mut()
+            .expect("retry screen stdin")
+            .write_all(b"q")
+            .and_then(|()| {
+                self.child
+                    .stdin
+                    .as_mut()
+                    .expect("retry screen stdin")
+                    .flush()
+            })
+            .expect("send retry-screen quit key");
+        self.finish_after(PTY_CLEANUP_TIMEOUT)
+    }
+
+    fn force_cleanup(self) -> std::process::Output {
+        self.finish_after(Duration::ZERO)
+    }
+
+    fn finish_after(mut self, timeout: Duration) -> std::process::Output {
+        let status = self
+            .wait_for_exit(timeout)
+            .unwrap_or_else(|| self.terminate_and_reap());
+        self.child.stdin.take();
+        for reader in self.readers.drain(..) {
+            reader.join().expect("join retry-screen output reader");
+        }
+        std::process::Output {
+            status,
+            stdout: std::mem::take(&mut self.output.lock().expect("output lock")),
+            stderr: Vec::new(),
+        }
+    }
+
+    fn wait_for_exit(&mut self, timeout: Duration) -> Option<std::process::ExitStatus> {
+        let deadline = Instant::now() + timeout;
+        loop {
+            match self.child.try_wait().expect("poll retry-screen process") {
+                Some(status) => return Some(status),
+                None if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(25)),
+                None => return None,
+            }
+        }
+    }
+
+    fn terminate_and_reap(&mut self) -> std::process::ExitStatus {
+        if let Err(error) = self.child.kill() {
+            assert_eq!(
+                error.kind(),
+                std::io::ErrorKind::InvalidInput,
+                "terminate stuck retry-screen process: {error}"
+            );
+        }
+        self.child.wait().expect("reap stuck retry-screen process")
+    }
+}
+
+#[cfg(unix)]
+impl Drop for RetryScreen {
+    fn drop(&mut self) {
+        if self.child.try_wait().ok().flatten().is_none() {
+            let _ = self.child.kill();
+            let _ = self.child.wait();
+        }
+        for reader in self.readers.drain(..) {
+            let _ = reader.join();
+        }
+    }
+}
+
+#[cfg(unix)]
+fn quit_retry_screen(child: RetryScreen) -> std::process::Output {
+    child.quit()
+}
+
+#[cfg(unix)]
+fn retry_screen_text(output: &std::process::Output) -> String {
+    terminal_text(&[&output.stdout[..], &output.stderr[..]].concat())
+}
+
+#[cfg(unix)]
+fn terminal_text(bytes: &[u8]) -> String {
+    let mut screen = vec![vec![' '; usize::from(PTY_COLUMNS)]; usize::from(PTY_ROWS)];
+    let (mut row, mut column, mut index) = (0_usize, 0_usize, 0_usize);
+    while index < bytes.len() {
+        match bytes[index] {
+            b'\x1b' if bytes.get(index + 1) == Some(&b'[') => {
+                let start = index + 2;
+                let Some((end, command)) =
+                    bytes[start..]
+                        .iter()
+                        .enumerate()
+                        .find_map(|(offset, byte)| {
+                            (*byte >= b'@' && *byte <= b'~').then_some((start + offset, *byte))
+                        })
+                else {
+                    break;
+                };
+                let parameters = std::str::from_utf8(&bytes[start..end]).unwrap_or_default();
+                match command {
+                    b'H' | b'f' => {
+                        let mut values = parameters
+                            .split(';')
+                            .map(|value| value.parse::<usize>().unwrap_or(1));
+                        row = values
+                            .next()
+                            .unwrap_or(1)
+                            .saturating_sub(1)
+                            .min(screen.len() - 1);
+                        column = values
+                            .next()
+                            .unwrap_or(1)
+                            .saturating_sub(1)
+                            .min(screen[0].len() - 1);
+                    }
+                    b'J' if parameters == "2" => {
+                        screen.iter_mut().for_each(|line| line.fill(' '));
+                        row = 0;
+                        column = 0;
+                    }
+                    _ => {}
+                }
+                index = end + 1;
+            }
+            b'\r' => {
+                column = 0;
+                index += 1;
+            }
+            b'\n' => {
+                row = (row + 1).min(screen.len() - 1);
+                index += 1;
+            }
+            byte if byte.is_ascii_control() => index += 1,
+            _ => {
+                let Some(value) = std::str::from_utf8(&bytes[index..])
+                    .ok()
+                    .and_then(|value| value.chars().next())
+                else {
+                    index += 1;
+                    continue;
+                };
+                if column < screen[0].len() {
+                    screen[row][column] = value;
+                }
+                column = (column + 1).min(screen[0].len());
+                index += value.len_utf8();
+            }
+        }
+    }
+    screen
+        .into_iter()
+        .map(|line| line.into_iter().collect::<String>().trim_end().to_owned())
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 #[cfg(unix)]
@@ -882,7 +1080,7 @@ fn it_001_daemon_starts_late_and_batuta_transitions_without_restart() {
         };
     std::thread::sleep(Duration::from_secs(4));
     let output = quit_retry_screen(child);
-    let text = output_text(&output);
+    let text = retry_screen_text(&output);
     assert!(output.status.success(), "{text}");
     assert!(text.contains("batuta — connecting"), "{text}");
     assert!(text.contains("attempt 1"), "{text}");
@@ -900,12 +1098,46 @@ fn it_002_missing_socket_retries_with_the_same_specific_error() {
         return;
     }
     let child = retry_screen_process("127.0.0.1:1");
-    std::thread::sleep(Duration::from_secs(16));
+    child.wait_for_text("last error: connection refused", Duration::from_secs(5));
+    child.wait_for_text("attempt 6", Duration::from_secs(20));
     let output = quit_retry_screen(child);
-    let text = output_text(&output);
+    let text = retry_screen_text(&output);
     assert!(output.status.success(), "{text}");
     assert!(text.contains("last error: connection refused"), "{text}");
     assert!(text.contains("attempt 6"), "{text}");
+}
+
+#[cfg(unix)]
+#[test]
+fn it_023_retry_screen_pty_output_and_cleanup_are_bounded() {
+    if !retry_screen_tests_allowed() {
+        eprintln!(
+            "skipped: retry-screen terminal test requires a detached worktree without .compozy"
+        );
+        return;
+    }
+
+    let child = retry_screen_process("127.0.0.1:1");
+    child.wait_for_text("attempt 1", Duration::from_secs(5));
+    child.wait_for_text("last error: connection refused", Duration::from_secs(5));
+    let output = quit_retry_screen(child);
+    let text = retry_screen_text(&output);
+    assert!(output.status.success(), "{text}");
+    assert!(text.contains("attempt 1"), "{text}");
+    assert!(text.contains("last error: connection refused"), "{text}");
+
+    let child = retry_screen_process("127.0.0.1:1");
+    child.wait_for_text("attempt 1", Duration::from_secs(5));
+    let started = Instant::now();
+    let output = child.force_cleanup();
+    assert!(
+        started.elapsed() <= PTY_CLEANUP_TIMEOUT,
+        "forced retry-screen cleanup exceeded {PTY_CLEANUP_TIMEOUT:?}"
+    );
+    assert!(
+        !output.status.success(),
+        "forced cleanup unexpectedly succeeded"
+    );
 }
 
 #[cfg(unix)]
@@ -933,7 +1165,7 @@ fn it_003_daemon_flap_during_startup_stays_in_the_retry_screen() {
     daemon.stop().expect("stop daemon during transition");
     std::thread::sleep(Duration::from_secs(1));
     let output = quit_retry_screen(child);
-    let text = output_text(&output);
+    let text = retry_screen_text(&output);
     assert!(output.status.success(), "{text}");
     assert!(text.contains("batuta — connecting"), "{text}");
 }
@@ -960,7 +1192,7 @@ fn it_004_quit_wins_the_connect_race_without_starting_a_session() {
             }
             Err(error) => panic!("start raced daemon: {error}"),
         };
-    let text = output_text(&output);
+    let text = retry_screen_text(&output);
     assert!(output.status.success(), "{text}");
     assert!(daemon.request_log().entries().is_empty());
 }
