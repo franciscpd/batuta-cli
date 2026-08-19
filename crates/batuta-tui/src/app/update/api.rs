@@ -36,6 +36,7 @@ fn failure(model: &mut Model, request: Request, error: String) -> Vec<Cmd> {
     match &request {
         Request::Status { .. } => {
             model.daemon.poll_ok = false;
+            model.daemon.status.clear();
             Vec::new()
         }
         Request::Runs { .. } => {

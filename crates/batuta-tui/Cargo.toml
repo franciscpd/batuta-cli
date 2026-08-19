@@ -22,5 +22,6 @@ unicode-width.workspace = true
 serde_json.workspace = true
 
 [dev-dependencies]
+compozy-testkit = { path = "../compozy-testkit" }
 insta = "1.48"
 tokio = { workspace = true, features = ["test-util"] }

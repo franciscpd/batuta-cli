@@ -169,6 +169,18 @@ impl Daemon {
         self.faults.set_catalog_draining(draining);
     }
 
+    pub fn set_daemon_draining(&self, draining: bool) {
+        self.faults.set_daemon_draining(draining);
+    }
+
+    pub fn set_prompt_delay(&self, delay: Duration) {
+        self.faults.set_prompt_delay(delay);
+    }
+
+    pub fn active_catalog_connections(&self) -> usize {
+        self.faults.active_catalog_connections()
+    }
+
     pub fn home_path(&self) -> &Path {
         self.home
             .as_ref()

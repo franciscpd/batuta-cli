@@ -2,11 +2,12 @@ use assert_cmd::Command;
 use compozy_testkit::{Daemon, DaemonOptions, StartOutcome};
 use predicates::prelude::*;
 use std::{
-    io::Write,
+    io::{Read, Write},
     net::TcpListener,
     process::{Child, Command as ProcessCommand, Stdio},
-    sync::OnceLock,
-    time::Duration,
+    sync::{Arc, Mutex, OnceLock},
+    thread::JoinHandle,
+    time::{Duration, Instant},
 };
 use wiremock::{
     Mock, MockServer, ResponseTemplate,
@@ -108,6 +109,140 @@ fn output_text(output: &std::process::Output) -> String {
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     )
+}
+
+#[cfg(unix)]
+struct LiveTui {
+    child: Child,
+    output: Arc<Mutex<Vec<u8>>>,
+    readers: Vec<JoinHandle<()>>,
+}
+
+#[cfg(unix)]
+impl LiveTui {
+    fn start(daemon: &Daemon) -> Self {
+        let binary = assert_cmd::cargo::cargo_bin("batuta");
+        let command = format!(
+            "stty cols 120 rows 40; exec {} --config {} --daemon tcp --tcp-addr {} --workspace {}",
+            shell_quote(binary),
+            shell_quote(daemon.home_path().join("missing-batuta-config.toml")),
+            daemon.tcp_addr(),
+            daemon.workspace_id(),
+        );
+        let mut child = ProcessCommand::new("script")
+            .args(["-q", "-e", "-f", "-c", &command, "/dev/null"])
+            .env("TERM", "xterm-256color")
+            .env("COMPOZY_HOME", daemon.home_path())
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("start batuta in a pseudo-terminal");
+        let output = Arc::new(Mutex::new(Vec::new()));
+        let readers = [
+            child.stdout.take().map(|stream| {
+                std::thread::spawn({
+                    let output = output.clone();
+                    move || capture(stream, output)
+                })
+            }),
+            child.stderr.take().map(|stream| {
+                std::thread::spawn({
+                    let output = output.clone();
+                    move || capture(stream, output)
+                })
+            }),
+        ]
+        .into_iter()
+        .flatten()
+        .collect();
+        Self {
+            child,
+            output,
+            readers,
+        }
+    }
+
+    fn send(&mut self, bytes: &[u8]) {
+        self.child
+            .stdin
+            .as_mut()
+            .expect("batuta stdin")
+            .write_all(bytes)
+            .expect("send batuta input");
+    }
+
+    fn text(&self) -> String {
+        String::from_utf8_lossy(&self.output.lock().expect("output lock")).into_owned()
+    }
+
+    fn output_len(&self) -> usize {
+        self.output.lock().expect("output lock").len()
+    }
+
+    fn wait_for_text(&self, expected: &str, timeout: Duration) {
+        let deadline = Instant::now() + timeout;
+        while Instant::now() < deadline {
+            if self.text().contains(expected) {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(25));
+        }
+        panic!("timed out waiting for {expected:?}\n{}", self.text());
+    }
+
+    fn finish(mut self) -> std::process::ExitStatus {
+        self.send(b"q");
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let status = loop {
+            match self.child.try_wait().expect("poll batuta process") {
+                Some(status) => break status,
+                None if Instant::now() < deadline => {
+                    std::thread::sleep(Duration::from_millis(25));
+                }
+                None => {
+                    self.child.kill().expect("kill stuck batuta process");
+                    break self.child.wait().expect("reap stuck batuta process");
+                }
+            }
+        };
+        for reader in self.readers {
+            reader.join().expect("join output reader");
+        }
+        status
+    }
+}
+
+#[cfg(unix)]
+fn capture(mut stream: impl Read, output: Arc<Mutex<Vec<u8>>>) {
+    let mut buffer = [0_u8; 4096];
+    loop {
+        match stream.read(&mut buffer) {
+            Ok(0) | Err(_) => break,
+            Ok(read) => output
+                .lock()
+                .expect("output lock")
+                .extend_from_slice(&buffer[..read]),
+        }
+    }
+}
+
+#[cfg(unix)]
+fn wait_for_request_count(daemon: &Daemon, path: &str, minimum: usize, timeout: Duration) {
+    let deadline = Instant::now() + timeout;
+    while Instant::now() < deadline {
+        let count = daemon
+            .request_log()
+            .entries()
+            .iter()
+            .filter(|(_, request_path)| request_path.starts_with(path))
+            .count();
+        if count >= minimum {
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(25));
+    }
+    panic!("timed out waiting for request {path} count {minimum}");
 }
 
 #[cfg(unix)]
@@ -828,6 +963,75 @@ fn it_004_quit_wins_the_connect_race_without_starting_a_session() {
     let text = output_text(&output);
     assert!(output.status.success(), "{text}");
     assert!(daemon.request_log().entries().is_empty());
+}
+
+#[cfg(unix)]
+#[test]
+fn e2e_003_draining_journey_runs_the_live_batuta_process() {
+    let Some(daemon) = daemon_or_skip() else {
+        return;
+    };
+    runtime()
+        .block_on(daemon.create_session("batuta"))
+        .expect("create session for draining journey");
+    daemon.request_log().clear();
+    daemon.set_daemon_draining(true);
+
+    let mut tui = LiveTui::start(&daemon);
+    tui.wait_for_text("daemon draining", Duration::from_secs(10));
+    wait_for_request_count(&daemon, "/api/sessions?", 1, Duration::from_secs(5));
+    wait_for_request_count(
+        &daemon,
+        &format!("/api/workspaces/{}/loop-runs", daemon.workspace_id()),
+        1,
+        Duration::from_secs(5),
+    );
+
+    tui.send(b"L");
+    wait_for_request_count(&daemon, "/api/logs?", 1, Duration::from_secs(5));
+    tui.wait_for_text("logs ·", Duration::from_secs(5));
+    tui.send(b"L");
+    std::thread::sleep(Duration::from_millis(100));
+    tui.send(b"n");
+    tui.wait_for_text(
+        "can't start session — daemon draining, try again once it recovers",
+        Duration::from_secs(5),
+    );
+    assert!(
+        daemon
+            .request_log()
+            .entries()
+            .iter()
+            .all(|(method, _)| method != "POST"),
+        "draining write guard must refuse before network dispatch"
+    );
+
+    let prior_status_polls = daemon
+        .request_log()
+        .entries()
+        .iter()
+        .filter(|(_, path)| path == "/api/status")
+        .count();
+    let recovery_output_offset = tui.output_len();
+    daemon.set_daemon_draining(false);
+    wait_for_request_count(
+        &daemon,
+        "/api/status",
+        prior_status_polls + 1,
+        Duration::from_secs(35),
+    );
+    std::thread::sleep(Duration::from_millis(500));
+    let output = tui.output.lock().expect("output lock");
+    let recovery_output = String::from_utf8_lossy(&output[recovery_output_offset..]);
+    assert!(!recovery_output.is_empty(), "recovery must redraw the TUI");
+    assert!(
+        !recovery_output.contains("daemon draining"),
+        "recovery redraw retained the draining banner: {recovery_output:?}"
+    );
+    drop(output);
+
+    let status = tui.finish();
+    assert!(status.success(), "batuta exited with {status}");
 }
 
 #[cfg(unix)]
