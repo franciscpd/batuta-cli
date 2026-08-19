@@ -1,7 +1,10 @@
 use crate::{Error, Result};
 use std::{
     net::SocketAddr,
-    sync::{Arc, Mutex},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, Ordering},
+    },
 };
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
@@ -30,6 +33,21 @@ impl RequestLog {
     }
 }
 
+#[derive(Clone, Default)]
+pub(crate) struct Faults {
+    catalog_draining: Arc<AtomicBool>,
+}
+
+impl Faults {
+    pub(crate) fn set_catalog_draining(&self, draining: bool) {
+        self.catalog_draining.store(draining, Ordering::SeqCst);
+    }
+
+    fn catalog_draining(&self) -> bool {
+        self.catalog_draining.load(Ordering::SeqCst)
+    }
+}
+
 pub(crate) struct Proxy {
     addr: SocketAddr,
     stop: Option<oneshot::Sender<()>>,
@@ -37,7 +55,7 @@ pub(crate) struct Proxy {
 }
 
 impl Proxy {
-    pub async fn start(target: SocketAddr, log: RequestLog) -> Result<Self> {
+    pub async fn start(target: SocketAddr, log: RequestLog, faults: Faults) -> Result<Self> {
         let listener = TcpListener::bind(("127.0.0.1", 0)).await?;
         let addr = listener.local_addr()?;
         let (stop, mut stopped) = oneshot::channel();
@@ -48,8 +66,9 @@ impl Proxy {
                     accepted = listener.accept() => {
                         let Ok((client, _)) = accepted else { break };
                         let log = log.clone();
+                        let faults = faults.clone();
                         tokio::spawn(async move {
-                            let _ = forward(client, target, log).await;
+                            let _ = forward(client, target, log, faults).await;
                         });
                     }
                 }
@@ -76,7 +95,12 @@ impl Drop for Proxy {
     }
 }
 
-async fn forward(mut client: TcpStream, target: SocketAddr, log: RequestLog) -> Result<()> {
+async fn forward(
+    mut client: TcpStream,
+    target: SocketAddr,
+    log: RequestLog,
+    faults: Faults,
+) -> Result<()> {
     let mut request = Vec::with_capacity(4096);
     let header_end = loop {
         if request.len() > 1024 * 1024 {
@@ -98,6 +122,15 @@ async fn forward(mut client: TcpStream, target: SocketAddr, log: RequestLog) -> 
     let method = fields.next().unwrap_or_default();
     let path = fields.next().unwrap_or_default();
     log.push(method, path);
+    if method == "GET" && path == "/api/sessions/catalog-stream" && faults.catalog_draining() {
+        let body = r#"{"error":"daemon is draining"}"#;
+        let response = format!(
+            "HTTP/1.1 503 Service Unavailable\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+            body.len()
+        );
+        client.write_all(response.as_bytes()).await?;
+        return Ok(());
+    }
     let content_length = headers
         .lines()
         .find_map(|line| {
