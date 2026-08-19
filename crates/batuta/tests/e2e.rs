@@ -1,7 +1,13 @@
 use assert_cmd::Command;
-use compozy_testkit::{Daemon, StartOutcome};
+use compozy_testkit::{Daemon, DaemonOptions, StartOutcome};
 use predicates::prelude::*;
-use std::sync::OnceLock;
+use std::{
+    io::Write,
+    net::TcpListener,
+    process::{Child, Command as ProcessCommand, Stdio},
+    sync::OnceLock,
+    time::Duration,
+};
 use wiremock::{
     Mock, MockServer, ResponseTemplate,
     matchers::{method, path},
@@ -41,6 +47,67 @@ fn daemon_or_skip() -> Option<Box<Daemon>> {
 
 fn command() -> Command {
     Command::cargo_bin("batuta").expect("batuta binary")
+}
+
+#[cfg(unix)]
+fn retry_screen_tests_allowed() -> bool {
+    !std::env::current_dir()
+        .ok()
+        .as_deref()
+        .is_some_and(|cwd| cwd.ancestors().any(|path| path.join(".compozy").exists()))
+}
+
+#[cfg(unix)]
+fn free_tcp_addr() -> String {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("reserve TCP port");
+    let address = listener.local_addr().expect("read reserved TCP port");
+    drop(listener);
+    address.to_string()
+}
+
+#[cfg(unix)]
+fn shell_quote(value: impl AsRef<std::path::Path>) -> String {
+    format!(
+        "'{}'",
+        value.as_ref().display().to_string().replace('\'', "'\\''")
+    )
+}
+
+#[cfg(unix)]
+fn retry_screen_process(tcp_addr: &str) -> Child {
+    let binary = assert_cmd::cargo::cargo_bin("batuta");
+    let command = format!(
+        "exec {} --daemon tcp --tcp-addr {tcp_addr}",
+        shell_quote(binary)
+    );
+    ProcessCommand::new("script")
+        .args(["-q", "-e", "-c", &command, "/dev/null"])
+        .env("TERM", "xterm-256color")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("start retry screen in a pseudo-terminal")
+}
+
+#[cfg(unix)]
+fn quit_retry_screen(mut child: Child) -> std::process::Output {
+    child
+        .stdin
+        .as_mut()
+        .expect("retry screen stdin")
+        .write_all(b"q")
+        .expect("send retry-screen quit key");
+    child.wait_with_output().expect("wait for retry screen")
+}
+
+#[cfg(unix)]
+fn output_text(output: &std::process::Output) -> String {
+    format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    )
 }
 
 #[cfg(unix)]
@@ -388,7 +455,9 @@ fn e2e_101_unreachable_batuta_never_enters_alt_screen() {
         .args(["--tcp-addr", "127.0.0.1:1"])
         .assert()
         .code(1)
-        .stderr(predicate::str::contains("error: daemon unreachable"))
+        .stderr(predicate::str::contains(
+            "batuta needs a terminal; use `batuta sessions --json` for scripting",
+        ))
         .stdout(predicate::str::contains("\u{1b}[?1049h").not());
 }
 
@@ -554,4 +623,124 @@ fn ut_111_file_logging_is_opt_in() {
         .assert()
         .failure();
     assert!(!disabled.exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn it_001_daemon_starts_late_and_batuta_transitions_without_restart() {
+    if !retry_screen_tests_allowed() {
+        eprintln!(
+            "skipped: retry-screen daemon test requires a detached worktree without .compozy"
+        );
+        return;
+    }
+    let tcp_addr = free_tcp_addr();
+    let port = tcp_addr.parse::<std::net::SocketAddr>().unwrap().port();
+    let child = retry_screen_process(&tcp_addr);
+    std::thread::sleep(Duration::from_secs(1));
+    let daemon =
+        match runtime().block_on(Daemon::start_with(DaemonOptions::default().http_port(port))) {
+            Ok(StartOutcome::Started(daemon)) => daemon,
+            Ok(StartOutcome::Skip(reason)) => {
+                eprintln!("skipped: {reason}");
+                let _ = quit_retry_screen(child);
+                return;
+            }
+            Err(error) => panic!("start delayed daemon: {error}"),
+        };
+    std::thread::sleep(Duration::from_secs(4));
+    let output = quit_retry_screen(child);
+    let text = output_text(&output);
+    assert!(output.status.success(), "{text}");
+    assert!(text.contains("batuta — connecting"), "{text}");
+    assert!(text.contains("attempt 1"), "{text}");
+    assert!(text.contains("daemon"), "{text}");
+    drop(daemon);
+}
+
+#[cfg(unix)]
+#[test]
+fn it_002_missing_socket_retries_with_the_same_specific_error() {
+    if !retry_screen_tests_allowed() {
+        eprintln!(
+            "skipped: retry-screen terminal test requires a detached worktree without .compozy"
+        );
+        return;
+    }
+    let child = retry_screen_process("127.0.0.1:1");
+    std::thread::sleep(Duration::from_secs(16));
+    let output = quit_retry_screen(child);
+    let text = output_text(&output);
+    assert!(output.status.success(), "{text}");
+    assert!(text.contains("last error: connection refused"), "{text}");
+    assert!(text.contains("attempt 6"), "{text}");
+}
+
+#[cfg(unix)]
+#[test]
+fn it_003_daemon_flap_during_startup_stays_in_the_retry_screen() {
+    if !retry_screen_tests_allowed() {
+        eprintln!(
+            "skipped: retry-screen daemon test requires a detached worktree without .compozy"
+        );
+        return;
+    }
+    let tcp_addr = free_tcp_addr();
+    let port = tcp_addr.parse::<std::net::SocketAddr>().unwrap().port();
+    let daemon =
+        match runtime().block_on(Daemon::start_with(DaemonOptions::default().http_port(port))) {
+            Ok(StartOutcome::Started(daemon)) => daemon,
+            Ok(StartOutcome::Skip(reason)) => {
+                eprintln!("skipped: {reason}");
+                return;
+            }
+            Err(error) => panic!("start flapping daemon: {error}"),
+        };
+    let child = retry_screen_process(&tcp_addr);
+    std::thread::sleep(Duration::from_millis(100));
+    daemon.stop().expect("stop daemon during transition");
+    std::thread::sleep(Duration::from_secs(1));
+    let output = quit_retry_screen(child);
+    let text = output_text(&output);
+    assert!(output.status.success(), "{text}");
+    assert!(text.contains("batuta — connecting"), "{text}");
+}
+
+#[cfg(unix)]
+#[test]
+fn it_004_quit_wins_the_connect_race_without_starting_a_session() {
+    if !retry_screen_tests_allowed() {
+        eprintln!(
+            "skipped: retry-screen daemon test requires a detached worktree without .compozy"
+        );
+        return;
+    }
+    let tcp_addr = free_tcp_addr();
+    let port = tcp_addr.parse::<std::net::SocketAddr>().unwrap().port();
+    let child = retry_screen_process(&tcp_addr);
+    let output = quit_retry_screen(child);
+    let daemon =
+        match runtime().block_on(Daemon::start_with(DaemonOptions::default().http_port(port))) {
+            Ok(StartOutcome::Started(daemon)) => daemon,
+            Ok(StartOutcome::Skip(reason)) => {
+                eprintln!("skipped: {reason}");
+                return;
+            }
+            Err(error) => panic!("start raced daemon: {error}"),
+        };
+    let text = output_text(&output);
+    assert!(output.status.success(), "{text}");
+    assert!(daemon.request_log().entries().is_empty());
+}
+
+#[cfg(unix)]
+#[test]
+fn e2e_111_daemon_down_then_up_matches_the_retry_screen_golden_path() {
+    it_001_daemon_starts_late_and_batuta_transitions_without_restart();
+}
+
+#[cfg(unix)]
+#[test]
+fn e2e_112_quitting_the_retry_screen_exits_zero_without_daemon_side_effects() {
+    it_004_quit_wins_the_connect_race_without_starting_a_session();
 }
