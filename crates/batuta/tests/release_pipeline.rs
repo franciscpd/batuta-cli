@@ -15,6 +15,22 @@ fn read(path: &str) -> String {
 }
 
 #[test]
+fn it_013_contract_job_is_independent_of_format_and_test_jobs() {
+    let workflow = read(".github/workflows/ci.yml");
+    let contract_job = workflow
+        .split("  contract:\n")
+        .nth(1)
+        .expect("contract job");
+
+    assert!(
+        !contract_job
+            .lines()
+            .any(|line| line.starts_with("    needs:")),
+        "contract job must run independently, even when fmt or test fails"
+    );
+}
+
+#[test]
 fn it_016_release_plan_bumps_version_and_changelog_in_a_standing_pr() {
     let workflow = read(".github/workflows/release-plan.yml");
     for required in [

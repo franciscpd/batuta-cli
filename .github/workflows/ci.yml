@@ -60,7 +60,6 @@ jobs:
       - run: scripts/check-boundaries.sh
 
   contract:
-    needs: [fmt, test]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
