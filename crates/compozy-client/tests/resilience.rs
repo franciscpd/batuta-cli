@@ -94,30 +94,71 @@ async fn it_010_recovered_catalog_delivers_at_sse_latency() {
 #[tokio::test]
 async fn it_011_catalog_flapping_obeys_reconnect_backoff() {
     let Some(daemon) = daemon().await else { return };
-    daemon.set_catalog_draining(true);
+    let mut reconnect_policy = ReconnectPolicy::default();
+    reconnect_policy.jitter = 0.0;
+    reconnect_policy.idle_timeout = Duration::from_millis(100);
+    let min_backoff = reconnect_policy.min;
+    let max_backoff = reconnect_policy.max;
+
     let client = Client::tcp(daemon.tcp_addr().to_string());
     let (_, receiver) = watch::channel(NoCursor);
-    let stream = client.catalog_stream(receiver, policy());
+    let requests = daemon.request_log();
+    requests.clear();
+    let stream = client.catalog_stream(receiver, reconnect_policy);
     futures_util::pin_mut!(stream);
 
-    let mut prior = Instant::now();
-    for expected in [
-        Duration::ZERO,
-        Duration::from_millis(100),
-        Duration::from_millis(200),
-        Duration::from_millis(400),
-        Duration::from_millis(400),
-    ] {
-        let event = tokio::time::timeout(Duration::from_secs(2), stream.next())
+    let started = Instant::now();
+    for flap in 0..5 {
+        daemon.set_catalog_draining(true);
+
+        let first_lost = tokio::time::timeout(Duration::from_secs(2), stream.next())
             .await
-            .expect("retry event timeout")
+            .expect("first retry event timeout")
             .expect("catalog stream ended");
-        let elapsed = prior.elapsed();
-        prior = Instant::now();
-        assert!(matches!(event, StreamEvent::Lost { .. }));
-        if !expected.is_zero() {
-            assert!(elapsed >= expected.saturating_sub(Duration::from_millis(25)));
-            assert!(elapsed <= expected + Duration::from_millis(250));
-        }
+        let StreamEvent::Lost {
+            attempt: 1,
+            next_in: first_delay,
+            ..
+        } = first_lost
+        else {
+            panic!("flap {flap}: expected first lost event, got {first_lost:?}");
+        };
+        assert!((min_backoff..=max_backoff).contains(&first_delay));
+
+        let retry_started = Instant::now();
+        let second_lost = tokio::time::timeout(first_delay + Duration::from_secs(1), stream.next())
+            .await
+            .expect("second retry event timeout")
+            .expect("catalog stream ended");
+        let StreamEvent::Lost {
+            attempt: 2,
+            next_in: second_delay,
+            ..
+        } = second_lost
+        else {
+            panic!("flap {flap}: expected second lost event, got {second_lost:?}");
+        };
+        assert!(retry_started.elapsed() >= first_delay);
+        assert!((min_backoff..=max_backoff).contains(&second_delay));
+
+        daemon.set_catalog_draining(false);
+        let recovery_started = Instant::now();
+        let recovered = tokio::time::timeout(second_delay + Duration::from_secs(1), stream.next())
+            .await
+            .expect("catalog recovery timeout")
+            .expect("catalog stream ended");
+        assert!(
+            matches!(recovered, StreamEvent::Reconnected),
+            "flap {flap}: expected reconnect, got {recovered:?}"
+        );
+        assert!(recovery_started.elapsed() >= second_delay);
     }
+
+    assert!(started.elapsed() < Duration::from_secs(10));
+    let catalog_requests = requests
+        .entries()
+        .into_iter()
+        .filter(|(method, path)| method == "GET" && path == "/api/sessions/catalog-stream")
+        .count();
+    assert_eq!(catalog_requests, 11, "unexpected reconnect attempts");
 }
