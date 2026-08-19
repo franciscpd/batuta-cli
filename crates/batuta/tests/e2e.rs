@@ -189,6 +189,103 @@ fn e2e_004_consecutive_doctors_are_independent() {
     assert_eq!(first.status.success(), second.status.success());
 }
 #[test]
+fn e2e_004_doctor_human_output_reports_a_live_catalog_handshake() {
+    runtime().block_on(async {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/api/status"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "schema_version": "x",
+                "daemon": {"status": "running", "version": "v0.3.0-beta.16"}
+            })))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/api/workspaces"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(serde_json::json!({"workspaces": []})),
+            )
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/api/sessions/catalog-stream"))
+            .respond_with(ResponseTemplate::new(200))
+            .mount(&server)
+            .await;
+
+        let output = command()
+            .args([
+                "doctor",
+                "--daemon",
+                "tcp",
+                "--tcp-addr",
+                &server.address().to_string(),
+            ])
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        let human = String::from_utf8(output.stdout).unwrap();
+        assert!(human.contains("daemon      running"));
+        assert!(human.contains("workspace   none"));
+        assert!(
+            predicate::str::is_match(r"(?m)^streams     catalog: live \(handshake \d+ms\)$")
+                .unwrap()
+                .eval(&human)
+        );
+    });
+}
+#[test]
+fn e2e_005_doctor_json_reports_a_fatal_catalog_during_draining() {
+    runtime().block_on(async {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/api/status"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "schema_version": "x",
+                "daemon": {"status": "draining", "version": "v0.3.0-beta.16"}
+            })))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/api/workspaces"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(serde_json::json!({"workspaces": []})),
+            )
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/api/sessions/catalog-stream"))
+            .respond_with(
+                ResponseTemplate::new(503)
+                    .set_body_json(serde_json::json!({"error": "daemon draining"})),
+            )
+            .mount(&server)
+            .await;
+
+        let output = command()
+            .args([
+                "doctor",
+                "--json",
+                "--daemon",
+                "tcp",
+                "--tcp-addr",
+                &server.address().to_string(),
+            ])
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(json["streams"]["catalog"]["state"], "fatal");
+        assert_eq!(json["streams"]["catalog"]["status"], 503);
+        assert!(
+            json["streams"]["catalog"]["cause"]
+                .as_str()
+                .unwrap()
+                .contains("draining")
+        );
+    });
+}
+#[test]
 fn e2e_005_doctor_json_is_one_line() {
     let Some(daemon) = daemon_or_skip() else {
         return;
