@@ -306,6 +306,10 @@ impl RetryScreen {
         self.finish_after(PTY_CLEANUP_TIMEOUT)
     }
 
+    fn finish_after_quit_request_strict(self) -> std::process::Output {
+        self.finish_after(PTY_QUIT_GRACE)
+    }
+
     fn force_cleanup(self) -> std::process::Output {
         self.finish_after(Duration::ZERO)
     }
@@ -505,8 +509,8 @@ impl LiveTui {
         String::from_utf8_lossy(&self.output.lock().expect("output lock")).into_owned()
     }
 
-    fn output_len(&self) -> usize {
-        self.output.lock().expect("output lock").len()
+    fn screen_text(&self) -> String {
+        terminal_text(&self.output.lock().expect("output lock"))
     }
 
     fn wait_for_text(&self, expected: &str, timeout: Duration) {
@@ -518,6 +522,21 @@ impl LiveTui {
             std::thread::sleep(Duration::from_millis(25));
         }
         panic!("timed out waiting for {expected:?}\n{}", self.text());
+    }
+
+    fn wait_for_screen(&self, timeout: Duration, predicate: impl Fn(&str) -> bool) -> String {
+        let deadline = Instant::now() + timeout;
+        while Instant::now() < deadline {
+            let screen = self.screen_text();
+            if predicate(&screen) {
+                return screen;
+            }
+            std::thread::sleep(Duration::from_millis(25));
+        }
+        panic!(
+            "timed out waiting for terminal state\n{}",
+            self.screen_text()
+        );
     }
 
     fn finish(mut self) -> std::process::ExitStatus {
@@ -1210,11 +1229,11 @@ fn it_001_daemon_starts_late_and_batuta_transitions_without_restart() {
             }
             Err(error) => panic!("start delayed daemon: {error}"),
         };
-    std::thread::sleep(Duration::from_secs(4));
+    child.wait_for_text("[1] Sessions", Duration::from_secs(5));
     let output = quit_retry_screen(child);
     let text = retry_screen_text(&output);
     assert!(output.status.success(), "{text}");
-    assert!(text.contains("daemon"), "{text}");
+    assert!(text.contains("[1] Sessions"), "{text}");
     drop(daemon);
 }
 
@@ -1345,9 +1364,13 @@ fn it_004_quit_wins_the_connect_race_without_starting_a_session() {
         });
         start.wait();
     });
-    let output = child.finish_after_quit_request();
+    let output = child.finish_after_quit_request_strict();
     let text = retry_screen_text(&output);
     assert!(output.status.success(), "{text}");
+    assert!(
+        !String::from_utf8_lossy(&output.stdout).contains("[1] Sessions"),
+        "quit/connect race rendered the live session view: {text}"
+    );
     let requests = daemon.request_log().entries();
     assert!(
         !requests.is_empty(),
@@ -1406,7 +1429,6 @@ fn e2e_003_draining_journey_runs_the_live_batuta_process() {
         .iter()
         .filter(|(_, path)| path == "/api/status")
         .count();
-    let recovery_output_offset = tui.output_len();
     daemon.set_daemon_draining(false);
     wait_for_request_count(
         &daemon,
@@ -1414,15 +1436,15 @@ fn e2e_003_draining_journey_runs_the_live_batuta_process() {
         prior_status_polls + 1,
         Duration::from_secs(35),
     );
-    std::thread::sleep(Duration::from_millis(500));
-    let output = tui.output.lock().expect("output lock");
-    let recovery_output = String::from_utf8_lossy(&output[recovery_output_offset..]);
-    assert!(!recovery_output.is_empty(), "recovery must redraw the TUI");
+    let recovery_screen = tui.wait_for_screen(Duration::from_secs(5), |screen| {
+        screen.contains("[1] Sessions")
+            && screen.contains("daemon running")
+            && !screen.contains("daemon draining — finishing in-flight work, writes refused")
+    });
     assert!(
-        !recovery_output.contains("daemon draining"),
-        "recovery redraw retained the draining banner: {recovery_output:?}"
+        !recovery_screen.contains("daemon draining — finishing in-flight work, writes refused"),
+        "recovery retained the draining banner: {recovery_screen:?}"
     );
-    drop(output);
 
     let status = tui.finish();
     assert!(status.success(), "batuta exited with {status}");
