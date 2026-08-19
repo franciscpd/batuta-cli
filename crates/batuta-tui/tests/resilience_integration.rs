@@ -244,10 +244,19 @@ async fn it_008_draining_with_zero_sessions_keeps_the_normal_empty_state() {
         limit: 50,
     });
     execute(&mut model, &client, sessions).await;
+    let runs = model.allocate(|id| Request::Runs {
+        id,
+        workspace: daemon.workspace_id().to_owned(),
+        loop_name: Some("batuta-deliver".into()),
+        limit: 50,
+    });
+    execute(&mut model, &client, runs).await;
 
     let screen = render(&model, 100, 30);
     assert!(screen.contains("no sessions"), "{screen}");
     assert!(!screen.contains("sessions unavailable"), "{screen}");
+    assert!(screen.contains("no runs for batuta-deliver"), "{screen}");
+    assert!(!screen.contains("runs unavailable"), "{screen}");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
