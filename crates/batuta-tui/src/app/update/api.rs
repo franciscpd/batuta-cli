@@ -262,6 +262,13 @@ fn apply(model: &mut Model, request: Request, response: ApiResponse) -> Vec<Cmd>
         }
         (Request::AddWorkspace { .. }, ApiResponse::WorkspaceAdded(outcome)) => match outcome {
             compozy_client::types::AddWorkspaceOutcome::Added(_) => {
+                if let Some(crate::app::model::Overlay::WorkspaceOnboarding {
+                    registration_complete,
+                    ..
+                }) = &mut model.overlay
+                {
+                    *registration_complete = true;
+                }
                 let request = model.allocate(|id| Request::Workspaces { id });
                 vec![Cmd::Get(request)]
             }

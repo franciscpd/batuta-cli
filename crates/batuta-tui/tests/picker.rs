@@ -380,6 +380,8 @@ fn ut_730_onboarding_remains_open_until_normal_boot_succeeds() {
             ..
         }) if message == "workspace selected; startup failed: service unavailable"
     ));
+    assert!(update(&mut model, key(KeyCode::Char('a'))).is_empty());
+    assert!(update(&mut model, key(KeyCode::Enter)).is_empty());
 }
 
 #[test]
@@ -725,6 +727,8 @@ fn it_708_to_it_711_keep_recovery_read_only_after_error_or_indeterminate_add() {
             ..
         }) if message == "workspace add returned, but /tmp/new-workspace is not in the refreshed catalog"
     ));
+    assert!(update(&mut missing_after_add, key(KeyCode::Char('a'))).is_empty());
+    assert!(update(&mut missing_after_add, key(KeyCode::Enter)).is_empty());
 }
 
 #[test]

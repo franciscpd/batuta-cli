@@ -470,6 +470,7 @@ fn onboarding_key(model: &mut Model, key: KeyEvent) -> Vec<Cmd> {
         adding,
         booting,
         refresh_required,
+        registration_complete,
         message,
         details_expanded,
         ..
@@ -480,7 +481,9 @@ fn onboarding_key(model: &mut Model, key: KeyEvent) -> Vec<Cmd> {
     if *adding || *booting {
         return Vec::new();
     }
-    if *refresh_required && !matches!(key.code, KeyCode::Char('w' | 'q' | 'r') | KeyCode::Esc) {
+    if (*refresh_required || *registration_complete)
+        && !matches!(key.code, KeyCode::Char('w' | 'q' | 'r') | KeyCode::Esc)
+    {
         return Vec::new();
     }
     match key.code {
