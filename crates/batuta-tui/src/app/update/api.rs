@@ -43,10 +43,14 @@ fn failure(model: &mut Model, request: Request, error: String) -> Vec<Cmd> {
                 return vec![Cmd::Get(request)];
             }
             if let Some(crate::app::model::Overlay::WorkspaceOnboarding {
-                adding, message, ..
+                adding,
+                confirming,
+                message,
+                ..
             }) = &mut model.overlay
             {
                 *adding = false;
+                *confirming = false;
                 *message = Some(if is_indeterminate_registration_error(&error) {
                     "workspace was not confirmed added — connection lost".into()
                 } else {
@@ -217,12 +221,14 @@ fn apply(model: &mut Model, request: Request, response: ApiResponse) -> Vec<Cmd>
                 }
                 if let Some(crate::app::model::Overlay::WorkspaceOnboarding {
                     adding,
+                    confirming,
                     message,
                     ..
                 }) = &mut model.overlay
                 {
                     let add_returned = *adding;
                     *adding = false;
+                    *confirming = false;
                     *message = Some(if add_returned {
                         format!(
                             "workspace add returned, but {} is not in the refreshed catalog",
@@ -246,11 +252,13 @@ fn apply(model: &mut Model, request: Request, response: ApiResponse) -> Vec<Cmd>
             compozy_client::types::AddWorkspaceOutcome::Unsupported => {
                 if let Some(crate::app::model::Overlay::WorkspaceOnboarding {
                     adding,
+                    confirming,
                     message,
                     ..
                 }) = &mut model.overlay
                 {
                     *adding = false;
+                    *confirming = false;
                     *message = model.startup_candidate.as_ref().map(|candidate| {
                         format!(
                             "This daemon cannot add workspaces through its API. Run: compozy workspace add {}",

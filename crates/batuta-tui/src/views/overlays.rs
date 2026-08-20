@@ -5,7 +5,7 @@ use crate::{
 use ratatui::{
     Frame,
     layout::Rect,
-    widgets::{Block, Borders, Clear, Paragraph},
+    widgets::{Block, Borders, Clear, Paragraph, Wrap},
 };
 fn centered(area: Rect, width: u16, height: u16) -> Rect {
     let width = width.min(area.width.saturating_sub(4));
@@ -59,20 +59,31 @@ pub fn render(model: &Model, frame: &mut Frame<'_>) {
             booting,
             message,
         } => {
-            let action = if *booting {
-                "starting workspace…"
+            let (title, action) = if *booting {
+                ("Workspace added", "✓ workspace added\n… starting workspace")
             } else if *adding {
-                "adding this directory…"
+                ("Add workspace?", "… adding workspace")
             } else if *confirming {
-                "Enter confirms registration; Esc cancels"
+                (
+                    "Add workspace?",
+                    "This registers the directory with the connected daemon.\nEnter confirm                                      Esc cancel",
+                )
+            } else if message.is_some() {
+                (
+                    "Workspace not registered",
+                    "[r] refresh\n[w] choose an existing workspace\n[q] exit",
+                )
             } else {
-                "a add this directory  r refresh  c choose existing workspace  q exit"
+                (
+                    "Workspace not registered",
+                    "[a] add this directory\n[w] choose an existing workspace\n[q] exit",
+                )
             };
             let message = message.as_deref().unwrap_or("");
             (
-                "workspace setup".into(),
+                title.into(),
                 format!(
-                    "{}\n{}\n\n{}\n{}",
+                    "Name   {}\nPath   {}\n\n{}\n{}",
                     candidate.name, candidate.root_dir, action, message
                 ),
                 0,
@@ -89,6 +100,7 @@ pub fn render(model: &Model, frame: &mut Frame<'_>) {
     frame.render_widget(
         Paragraph::new(text)
             .scroll((scroll as u16, 0))
+            .wrap(Wrap { trim: false })
             .block(Block::default().title(title).borders(Borders::ALL))
             .style(model.theme.default),
         area,

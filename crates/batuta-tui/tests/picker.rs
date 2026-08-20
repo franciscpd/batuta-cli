@@ -476,6 +476,70 @@ fn onboarding_model() -> batuta_tui::Model {
     model
 }
 
+#[test]
+fn ut_733_onboarding_screens_match_the_workspace_contract() {
+    let mut model = onboarding_model();
+    let candidate = render(&model, 100, 30);
+    for text in [
+        "Workspace not registered",
+        "Name   new-workspace",
+        "Path   /tmp/new-workspace",
+        "[a] add this directory",
+        "[w] choose an existing workspace",
+        "[q] exit",
+    ] {
+        assert!(candidate.contains(text), "{candidate}");
+    }
+    insta::assert_snapshot!("onboarding_candidate_100x30", candidate);
+
+    update(&mut model, key(KeyCode::Char('a')));
+    let confirmation = render(&model, 100, 30);
+    for text in [
+        "Add workspace?",
+        "This registers the directory with the connected daemon.",
+        "Enter confirm",
+        "Esc cancel",
+    ] {
+        assert!(confirmation.contains(text), "{confirmation}");
+    }
+    insta::assert_snapshot!("onboarding_confirmation_100x30", confirmation);
+
+    let add = confirm_add(&mut model);
+    let progress = render(&model, 100, 30);
+    assert!(progress.contains("… adding workspace"), "{progress}");
+    insta::assert_snapshot!("onboarding_progress_100x30", progress);
+
+    respond(
+        &mut model,
+        add,
+        ApiResponse::WorkspaceAdded(AddWorkspaceOutcome::Unsupported),
+    );
+    let unsupported = render(&model, 100, 30);
+    for text in [
+        "This daemon cannot add workspaces through its API.",
+        "[r] refresh",
+        "[w] choose an existing workspace",
+        "[q] exit",
+    ] {
+        assert!(unsupported.contains(text), "{unsupported}");
+    }
+    insta::assert_snapshot!("onboarding_unsupported_100x30", unsupported);
+
+    let mut failure = onboarding_model();
+    let add = confirm_add(&mut failure);
+    fail(&mut failure, add, "HTTP 422: invalid root");
+    let error = render(&failure, 100, 30);
+    for text in [
+        "registration failed — HTTP 422: invalid root",
+        "[r] refresh",
+        "[w] choose an existing workspace",
+        "[q] exit",
+    ] {
+        assert!(error.contains(text), "{error}");
+    }
+    insta::assert_snapshot!("onboarding_error_100x30", error);
+}
+
 fn confirm_add(model: &mut batuta_tui::Model) -> Request {
     update(model, key(KeyCode::Char('a')));
     update(model, key(KeyCode::Enter))
@@ -493,7 +557,7 @@ fn it_703_onboarding_cancel_picker_and_exit_paths_emit_no_registration_write() {
     assert!(update(&mut model, key(KeyCode::Char('a'))).is_empty());
     assert!(update(&mut model, key(KeyCode::Esc)).is_empty());
 
-    let picker = update(&mut model, key(KeyCode::Char('c')));
+    let picker = update(&mut model, key(KeyCode::Char('w')));
     assert!(
         picker
             .iter()
@@ -573,7 +637,7 @@ fn it_708_to_it_711_keep_recovery_read_only_after_error_or_indeterminate_add() {
             .iter()
             .all(|command| !matches!(command, Cmd::Post(_)))
     );
-    let choose = update(&mut model, key(KeyCode::Char('c')));
+    let choose = update(&mut model, key(KeyCode::Char('w')));
     assert!(
         choose
             .iter()
@@ -689,7 +753,7 @@ fn it_712_catalog_refetch_failure_after_add_keeps_onboarding_recoverable() {
             .any(|command| matches!(command, Cmd::Get(Request::Workspaces { .. })))
     );
     assert_eq!(update(&mut model, key(KeyCode::Char('q'))), vec![Cmd::Quit]);
-    let choose = update(&mut model, key(KeyCode::Char('c')));
+    let choose = update(&mut model, key(KeyCode::Char('w')));
     assert!(
         choose
             .iter()

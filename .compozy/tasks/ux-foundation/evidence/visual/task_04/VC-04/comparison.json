@@ -1,0 +1,1 @@
+{"contract":"VC-04","state":"failure recovery","viewport":"100x30","reference":"_uiux.md#progress-unsupported-and-failure; _dx.md#errors","implementation_snapshot":"crates/batuta-tui/tests/snapshots/picker__onboarding_error_100x30.snap","result":"PASS","blocking_divergences":0}

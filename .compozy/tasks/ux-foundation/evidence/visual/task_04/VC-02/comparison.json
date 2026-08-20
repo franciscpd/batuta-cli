@@ -1,0 +1,1 @@
+{"contract":"VC-02","state":"add confirmation","viewport":"100x30","reference":"_uiux.md#confirmation","implementation_snapshot":"crates/batuta-tui/tests/snapshots/picker__onboarding_confirmation_100x30.snap","result":"PASS","blocking_divergences":0}

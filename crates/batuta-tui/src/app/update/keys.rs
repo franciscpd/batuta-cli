@@ -478,7 +478,7 @@ fn onboarding_key(model: &mut Model, key: KeyEvent) -> Vec<Cmd> {
         return Vec::new();
     }
     match key.code {
-        KeyCode::Char('c') => super::picker::open(model, false),
+        KeyCode::Char('w') => super::picker::open(model, false),
         KeyCode::Char('q') => quit(model),
         KeyCode::Char('r') => {
             *message = Some("refreshing workspace catalog…".into());
