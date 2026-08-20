@@ -118,6 +118,19 @@ fn it_021_platform_failure_blocks_the_release_as_a_whole() {
 }
 
 #[test]
+fn it_021_host_requires_successful_release_origin_verification() {
+    let release = read(".github/workflows/release.yml");
+    let host = release
+        .split("  host:\n")
+        .nth(1)
+        .and_then(|jobs| jobs.split("\n  announce:").next())
+        .expect("host job");
+
+    assert!(host.contains("      - custom-verify-release-origin"));
+    assert!(host.contains("needs.custom-verify-release-origin.result == 'success'"));
+}
+
+#[test]
 fn e2e_007_release_graph_has_linux_macos_checksums_and_changelog_notes() {
     let config: toml::Value =
         toml::from_str(&read("dist-workspace.toml")).expect("parse dist config");
