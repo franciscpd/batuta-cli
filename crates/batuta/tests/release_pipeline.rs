@@ -31,6 +31,41 @@ fn it_013_contract_job_is_independent_of_format_and_test_jobs() {
 }
 
 #[test]
+fn it_013_contract_job_downloads_verified_pinned_daemon_asset() {
+    let workflow = read(".github/workflows/ci.yml");
+    let contract_job = workflow
+        .split("  contract:\n")
+        .nth(1)
+        .expect("contract job");
+
+    for required in [
+        "COMPOZY_DAEMON_VERSION: v0.3.0-beta.16",
+        "COMPOZY_DAEMON_SHA256: f0bee98c16ea7e04584c21e0cc76564f20b490c0f33824e862cf1e3fb3815742",
+        "https://github.com/compozy/compozy/releases/download/${COMPOZY_DAEMON_VERSION}/compozy_linux_x86_64.tar.gz",
+        "install_dir=\"${RUNNER_TEMP}/compozy-${COMPOZY_DAEMON_VERSION}\"",
+        "echo \"${COMPOZY_DAEMON_SHA256}  ${archive}\"",
+        "sha256sum --check",
+    ] {
+        assert!(
+            workflow.contains(required),
+            "missing verified daemon asset contract: {required}"
+        );
+    }
+    assert_eq!(workflow.matches("v0.3.0-beta.16").count(), 1);
+    assert_eq!(
+        workflow
+            .matches("f0bee98c16ea7e04584c21e0cc76564f20b490c0f33824e862cf1e3fb3815742")
+            .count(),
+        1
+    );
+    assert!(contract_job.lines().any(|line| {
+        line.trim() == "COMPOZY_TEST_DAEMON_BIN: ${{ steps.install-compozy.outputs.bin }}"
+    }));
+    assert!(!contract_job.contains("actions/setup-go"));
+    assert!(!contract_job.contains("go install"));
+}
+
+#[test]
 fn it_016_release_plan_bumps_version_and_changelog_in_a_standing_pr() {
     let workflow = read(".github/workflows/release-plan.yml");
     for required in [
