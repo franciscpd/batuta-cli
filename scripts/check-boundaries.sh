@@ -35,7 +35,7 @@ for forbidden in compozy_client tokio std::fs std::net std::process; do
 done
 
 command -v jq >/dev/null || fail "dependency graph rule requires jq" "$client_manifest"
-metadata="$(cd "$root" && cargo metadata --offline --format-version 1)"
+metadata="$(cd "$root" && cargo metadata --locked --format-version 1)"
 client_id="$(jq -r '.packages[] | select(.name == "compozy-client") | .id' <<<"$metadata")"
 [[ -n "$client_id" && "$client_id" != "null" ]] || fail "dependency graph rule" "$client_manifest"
 normal_dependencies="$(jq -r --arg id "$client_id" '
