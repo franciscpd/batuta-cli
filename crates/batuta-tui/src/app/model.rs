@@ -379,6 +379,7 @@ pub enum Overlay {
         confirming: bool,
         adding: bool,
         booting: bool,
+        refresh_required: bool,
         message: Option<String>,
     },
     Clarify {
@@ -590,6 +591,7 @@ impl Model {
             confirming: false,
             adding: false,
             booting: false,
+            refresh_required: false,
             message: None,
         });
         self.dirty = true;
@@ -622,6 +624,7 @@ impl Model {
             confirming: false,
             adding: false,
             booting: false,
+            refresh_required: false,
             message: Some(format!("workspace selected; startup failed: {error}")),
         });
         let commands = self.all_stop_cmds();

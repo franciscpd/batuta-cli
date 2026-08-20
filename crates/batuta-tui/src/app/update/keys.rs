@@ -469,12 +469,16 @@ fn onboarding_key(model: &mut Model, key: KeyEvent) -> Vec<Cmd> {
         confirming,
         adding,
         booting,
+        refresh_required,
         message,
     }) = &mut model.overlay
     else {
         return Vec::new();
     };
     if *adding || *booting {
+        return Vec::new();
+    }
+    if *refresh_required && !matches!(key.code, KeyCode::Char('w' | 'q' | 'r') | KeyCode::Esc) {
         return Vec::new();
     }
     match key.code {

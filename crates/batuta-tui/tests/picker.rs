@@ -657,6 +657,11 @@ fn it_708_to_it_711_keep_recovery_read_only_after_error_or_indeterminate_add() {
             ..
         }) if message == "workspace was not confirmed added — connection lost"
     ));
+    let screen = render(&indeterminate, 100, 30);
+    assert!(screen.contains("[r] refresh"), "{screen}");
+    assert!(!screen.contains("[a] add this directory"), "{screen}");
+    assert!(update(&mut indeterminate, key(KeyCode::Char('a'))).is_empty());
+    assert!(update(&mut indeterminate, key(KeyCode::Enter)).is_empty());
     let refresh = update(&mut indeterminate, key(KeyCode::Char('r')))
         .into_iter()
         .find_map(|command| match command {
@@ -676,9 +681,15 @@ fn it_708_to_it_711_keep_recovery_read_only_after_error_or_indeterminate_add() {
         indeterminate.overlay,
         Some(Overlay::WorkspaceOnboarding {
             adding: false,
-            message: Some(ref message),
+            message: None,
             ..
-        }) if message == "this directory is not registered; add it, refresh, or choose a workspace"
+        })
+    ));
+    assert!(render(&indeterminate, 100, 30).contains("[a] add this directory"));
+    assert!(update(&mut indeterminate, key(KeyCode::Char('a'))).is_empty());
+    assert!(matches!(
+        update(&mut indeterminate, key(KeyCode::Enter)).as_slice(),
+        [Cmd::Post(Request::AddWorkspace { .. })]
     ));
 
     let mut missing_after_add = onboarding_model();

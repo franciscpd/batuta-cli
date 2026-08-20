@@ -58,6 +58,7 @@ pub fn render(model: &Model, frame: &mut Frame<'_>) {
             adding,
             booting,
             message,
+            ..
         } => {
             let (title, action) = if *booting {
                 ("Workspace added", "✓ workspace added\n… starting workspace")

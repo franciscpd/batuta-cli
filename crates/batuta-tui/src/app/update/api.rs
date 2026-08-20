@@ -45,13 +45,16 @@ fn failure(model: &mut Model, request: Request, error: String) -> Vec<Cmd> {
             if let Some(crate::app::model::Overlay::WorkspaceOnboarding {
                 adding,
                 confirming,
+                refresh_required,
                 message,
                 ..
             }) = &mut model.overlay
             {
                 *adding = false;
                 *confirming = false;
-                *message = Some(if is_indeterminate_registration_error(&error) {
+                let indeterminate = is_indeterminate_registration_error(&error);
+                *refresh_required = indeterminate;
+                *message = Some(if indeterminate {
                     "workspace was not confirmed added — connection lost".into()
                 } else {
                     format!("registration failed — {error}")
@@ -222,22 +225,29 @@ fn apply(model: &mut Model, request: Request, response: ApiResponse) -> Vec<Cmd>
                 if let Some(crate::app::model::Overlay::WorkspaceOnboarding {
                     adding,
                     confirming,
+                    refresh_required,
                     message,
                     ..
                 }) = &mut model.overlay
                 {
                     let add_returned = *adding;
+                    let refresh_was_required = *refresh_required;
                     *adding = false;
                     *confirming = false;
-                    *message = Some(if add_returned {
-                        format!(
+                    *refresh_required = false;
+                    *message = if add_returned {
+                        Some(format!(
                             "workspace add returned, but {} is not in the refreshed catalog",
                             candidate.root_dir
-                        )
+                        ))
+                    } else if refresh_was_required {
+                        None
                     } else {
-                        "this directory is not registered; add it, refresh, or choose a workspace"
-                            .into()
-                    });
+                        Some(
+                            "this directory is not registered; add it, refresh, or choose a workspace"
+                                .into(),
+                        )
+                    };
                 }
                 return Vec::new();
             }
