@@ -16,8 +16,8 @@ use std::{
     time::{Duration, Instant},
 };
 use wiremock::{
-    Mock, MockServer, ResponseTemplate,
-    matchers::{method, path},
+    Mock, MockServer, Request as MockRequest, Respond, ResponseTemplate,
+    matchers::{any, method, path},
 };
 
 fn runtime() -> &'static tokio::runtime::Runtime {
@@ -102,6 +102,146 @@ struct LiveTui {
     child: Child,
     output: Arc<Mutex<Vec<u8>>>,
     readers: Vec<JoinHandle<()>>,
+}
+
+#[cfg(unix)]
+#[derive(Clone, Copy)]
+enum OnboardingOutcome {
+    Added,
+    Unsupported,
+    Rejected,
+}
+
+#[cfg(unix)]
+struct OnboardingFixture {
+    server: MockServer,
+    state: Arc<Mutex<OnboardingFixtureState>>,
+}
+
+#[cfg(unix)]
+struct OnboardingFixtureState {
+    candidate: String,
+    outcome: OnboardingOutcome,
+    added: bool,
+    writes: usize,
+    add_payloads: Vec<serde_json::Value>,
+    requests: Vec<(String, String)>,
+}
+
+#[cfg(unix)]
+impl OnboardingFixture {
+    async fn start(candidate: &std::path::Path, outcome: OnboardingOutcome) -> Self {
+        let server = MockServer::start().await;
+        let state = Arc::new(Mutex::new(OnboardingFixtureState {
+            candidate: candidate.display().to_string(),
+            outcome,
+            added: false,
+            writes: 0,
+            add_payloads: Vec::new(),
+            requests: Vec::new(),
+        }));
+        Mock::given(any())
+            .respond_with(OnboardingResponder {
+                state: state.clone(),
+            })
+            .mount(&server)
+            .await;
+        Self { server, state }
+    }
+
+    fn addr(&self) -> String {
+        self.server.address().to_string()
+    }
+
+    fn writes(&self) -> usize {
+        self.state.lock().expect("fixture state lock").writes
+    }
+
+    fn requests(&self) -> Vec<(String, String)> {
+        self.state
+            .lock()
+            .expect("fixture state lock")
+            .requests
+            .clone()
+    }
+
+    fn add_payloads(&self) -> Vec<serde_json::Value> {
+        self.state
+            .lock()
+            .expect("fixture state lock")
+            .add_payloads
+            .clone()
+    }
+}
+
+#[cfg(unix)]
+struct OnboardingResponder {
+    state: Arc<Mutex<OnboardingFixtureState>>,
+}
+
+#[cfg(unix)]
+impl Respond for OnboardingResponder {
+    fn respond(&self, request: &MockRequest) -> ResponseTemplate {
+        let path = request.url.path();
+        let method = request.method.as_str();
+        let mut state = self.state.lock().expect("fixture state lock");
+        state.requests.push((method.into(), path.into()));
+        match (method, path) {
+            ("GET", "/api/status") => ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "daemon": {"status": "running", "version": "v0.3.0-beta.16"}
+            })),
+            ("GET", "/api/workspaces") => {
+                let workspaces = state.added.then(|| serde_json::json!({
+                    "id": "ws-new",
+                    "name": "onboarding-project",
+                    "root_dir": state.candidate,
+                    "add_dirs": []
+                }));
+                ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                    "workspaces": workspaces.into_iter().collect::<Vec<_>>()
+                }))
+            }
+            ("POST", "/api/workspaces") => {
+                state.writes += 1;
+                state.add_payloads.push(request.body_json().expect("add payload is JSON"));
+                match state.outcome {
+                    OnboardingOutcome::Added => {
+                        state.added = true;
+                        ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                            "id": "ws-new",
+                            "name": "onboarding-project",
+                            "root_dir": state.candidate,
+                            "add_dirs": []
+                        }))
+                    }
+                    OnboardingOutcome::Unsupported => ResponseTemplate::new(404)
+                        .set_body_json(serde_json::json!({"error": "route missing"})),
+                    OnboardingOutcome::Rejected => ResponseTemplate::new(422).set_body_json(
+                        serde_json::json!({
+                            "error": "workspace could not be added",
+                            "code": "workspace_invalid",
+                            "diagnostic": "root_dir must be canonical"
+                        }),
+                    ),
+                }
+            }
+            ("GET", "/api/sessions") => {
+                ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                    "sessions": [], "page": {"has_more": false, "limit": 20}
+                }))
+            }
+            ("GET", path) if path.starts_with("/api/workspaces/ws-new/loop-runs") => {
+                ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                    "runs": [], "page": {"has_more": false, "limit": 20}
+                }))
+            }
+            ("GET", "/api/observe/overview") => ResponseTemplate::new(200).set_body_json(
+                serde_json::json!({"overview": {"attention": {"total": 0, "by_kind": {}, "items": []}}}),
+            ),
+            ("GET", "/api/sessions/catalog-stream") => ResponseTemplate::new(200),
+            _ => ResponseTemplate::new(404).set_body_json(serde_json::json!({"error": "unexpected fixture route"})),
+        }
+    }
 }
 
 #[cfg(unix)]
@@ -555,6 +695,48 @@ impl LiveTui {
         }
     }
 
+    fn start_onboarding(tcp_addr: &str, cwd: &std::path::Path) -> Self {
+        let binary = assert_cmd::cargo::cargo_bin("batuta");
+        let config = tempfile::NamedTempFile::new().expect("create empty config file");
+        let command = format!(
+            "stty cols {PTY_COLUMNS} rows {PTY_ROWS}; cd {}; exec {} --config {} --daemon tcp --tcp-addr {tcp_addr}",
+            shell_quote(cwd),
+            shell_quote(binary),
+            shell_quote(config.path()),
+        );
+        let mut child = ProcessCommand::new("script")
+            .args(["-q", "-e", "-f", "-c", &command, "/dev/null"])
+            .env("TERM", "xterm-256color")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("start onboarding fixture in a pseudo-terminal");
+        let output = Arc::new(Mutex::new(Vec::new()));
+        let readers = [
+            child.stdout.take().map(|stream| {
+                std::thread::spawn({
+                    let output = output.clone();
+                    move || capture(stream, output)
+                })
+            }),
+            child.stderr.take().map(|stream| {
+                std::thread::spawn({
+                    let output = output.clone();
+                    move || capture(stream, output)
+                })
+            }),
+        ]
+        .into_iter()
+        .flatten()
+        .collect();
+        Self {
+            child,
+            output,
+            readers,
+        }
+    }
+
     fn send(&mut self, bytes: &[u8]) {
         self.child
             .stdin
@@ -600,6 +782,10 @@ impl LiveTui {
 
     fn finish(mut self) -> std::process::ExitStatus {
         self.send(b"q");
+        self.finish_after_exit_request()
+    }
+
+    fn finish_after_exit_request(mut self) -> std::process::ExitStatus {
         let deadline = Instant::now() + Duration::from_secs(5);
         let status = loop {
             match self.child.try_wait().expect("poll batuta process") {
@@ -650,6 +836,18 @@ fn wait_for_request_count(daemon: &Daemon, path: &str, minimum: usize, timeout: 
         std::thread::sleep(Duration::from_millis(25));
     }
     panic!("timed out waiting for request {path} count {minimum}");
+}
+
+#[cfg(unix)]
+fn wait_for_onboarding_writes(fixture: &OnboardingFixture, minimum: usize) {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while Instant::now() < deadline {
+        if fixture.writes() >= minimum {
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(25));
+    }
+    panic!("timed out waiting for {minimum} registration writes");
 }
 
 #[cfg(unix)]
@@ -1534,4 +1732,150 @@ fn e2e_111_daemon_down_then_up_matches_the_retry_screen_golden_path() {
 #[test]
 fn e2e_112_quitting_the_retry_screen_exits_zero_without_daemon_side_effects() {
     it_004_quit_wins_the_connect_race_without_starting_a_session();
+}
+
+#[cfg(unix)]
+#[test]
+fn e2e_705_confirmed_registration_refetches_selects_and_boots() {
+    runtime().block_on(async {
+        let candidate = tempfile::tempdir().expect("create unregistered project");
+        let fixture = OnboardingFixture::start(candidate.path(), OnboardingOutcome::Added).await;
+        let mut tui = LiveTui::start_onboarding(&fixture.addr(), candidate.path());
+
+        let candidate_screen = tui.wait_for_screen(Duration::from_secs(5), |screen| {
+            screen.contains("Workspace not registered")
+                && screen.contains(&candidate.path().display().to_string())
+        });
+        assert!(candidate_screen.contains("Name   "));
+        tui.send(b"a");
+        tui.wait_for_text("Add workspace?", Duration::from_secs(5));
+        tui.send(b"\x1b");
+        std::thread::sleep(Duration::from_millis(100));
+        assert_eq!(fixture.writes(), 0, "confirmation cancel must not write");
+
+        tui.send(b"a");
+        tui.wait_for_text("Add workspace?", Duration::from_secs(5));
+        tui.send(b"\r");
+        wait_for_onboarding_writes(&fixture, 1);
+        tui.wait_for_screen(Duration::from_secs(5), |screen| {
+            screen.contains("[1] Sessions")
+        });
+        assert_eq!(fixture.writes(), 1, "confirmed add must write exactly once");
+        assert_eq!(
+            fixture.add_payloads(),
+            vec![serde_json::json!({
+                "name": candidate.path().file_name().unwrap().to_string_lossy(),
+                "root_dir": candidate.path(),
+            })]
+        );
+        let requests = fixture.requests();
+        let post = requests
+            .iter()
+            .position(|(method, path)| method == "POST" && path == "/api/workspaces")
+            .expect("confirmed add request");
+        assert!(
+            requests[post + 1..]
+                .iter()
+                .any(|(method, path)| method == "GET" && path == "/api/workspaces"),
+            "successful add must refetch the workspace catalog: {requests:?}"
+        );
+        assert!(
+            requests
+                .iter()
+                .any(|(method, path)| { method == "GET" && path == "/api/sessions" }),
+            "selected workspace must run normal boot: {requests:?}"
+        );
+
+        assert!(tui.finish().success());
+    });
+}
+
+#[cfg(unix)]
+#[test]
+fn e2e_706_unsupported_and_rejected_registration_remain_actionable() {
+    runtime().block_on(async {
+        let candidate = tempfile::tempdir().expect("create unsupported project");
+        let fixture =
+            OnboardingFixture::start(candidate.path(), OnboardingOutcome::Unsupported).await;
+        let mut tui = LiveTui::start_onboarding(&fixture.addr(), candidate.path());
+        tui.wait_for_screen(Duration::from_secs(5), |screen| {
+            screen.contains("Workspace not registered")
+        });
+        tui.send(b"a\r");
+        wait_for_onboarding_writes(&fixture, 1);
+        tui.wait_for_screen(Duration::from_secs(5), |screen| {
+            screen.contains("This daemon cannot add workspaces through its API.")
+        });
+        let unsupported = tui.screen_text();
+        assert!(unsupported.contains("compozy"), "{unsupported}");
+        assert!(unsupported.contains("workspace add"), "{unsupported}");
+        assert!(unsupported.contains("[r] refresh"), "{unsupported}");
+        assert_eq!(fixture.writes(), 1);
+        assert!(tui.finish().success());
+
+        let candidate = tempfile::tempdir().expect("create rejected project");
+        let fixture = OnboardingFixture::start(candidate.path(), OnboardingOutcome::Rejected).await;
+        let mut tui = LiveTui::start_onboarding(&fixture.addr(), candidate.path());
+        tui.wait_for_screen(Duration::from_secs(5), |screen| {
+            screen.contains("Workspace not registered")
+        });
+        tui.send(b"a\r");
+        wait_for_onboarding_writes(&fixture, 1);
+        tui.wait_for_screen(Duration::from_secs(5), |screen| {
+            screen.contains("registration failed")
+        });
+        let rejected = tui.screen_text();
+        assert!(rejected.contains("registration failed"), "{rejected}");
+        assert!(
+            rejected.contains("[w] choose an existing workspace"),
+            "{rejected}"
+        );
+        assert!(!rejected.contains("workspace added"), "{rejected}");
+        assert!(tui.finish().success());
+    });
+}
+
+#[cfg(unix)]
+#[test]
+fn e2e_707_onboarding_exit_picker_and_cancel_paths_make_no_registration_write() {
+    runtime().block_on(async {
+        for action in [b"w".as_slice(), b"a".as_slice()] {
+            let candidate = tempfile::tempdir().expect("create no-write project");
+            let fixture =
+                OnboardingFixture::start(candidate.path(), OnboardingOutcome::Added).await;
+            let mut tui = LiveTui::start_onboarding(&fixture.addr(), candidate.path());
+            tui.wait_for_screen(Duration::from_secs(5), |screen| {
+                screen.contains("Workspace not registered")
+            });
+            tui.send(action);
+            if action == b"w" {
+                tui.wait_for_screen(Duration::from_secs(5), |screen| {
+                    screen.contains("no workspaces")
+                });
+            } else {
+                tui.wait_for_screen(Duration::from_secs(5), |screen| {
+                    screen.contains("Add workspace?")
+                });
+            }
+            tui.send(b"\x1b");
+            tui.wait_for_screen(Duration::from_secs(5), |screen| {
+                screen.contains("Workspace not registered")
+            });
+            assert!(tui.finish().success());
+            assert_eq!(fixture.writes(), 0, "action {action:?} must not write");
+            assert!(
+                fixture.requests().iter().all(|(method, _)| method == "GET"),
+                "action {action:?} must not mutate fixture state"
+            );
+        }
+
+        let candidate = tempfile::tempdir().expect("create exit project");
+        let fixture = OnboardingFixture::start(candidate.path(), OnboardingOutcome::Added).await;
+        let tui = LiveTui::start_onboarding(&fixture.addr(), candidate.path());
+        tui.wait_for_screen(Duration::from_secs(5), |screen| {
+            screen.contains("Workspace not registered")
+        });
+        assert!(tui.finish().success());
+        assert_eq!(fixture.writes(), 0, "onboarding exit must not write");
+    });
 }
