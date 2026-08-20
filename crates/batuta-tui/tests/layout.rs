@@ -89,7 +89,7 @@ fn medium_layout_grows_only_the_highest_relevance_contextual_panel() {
 }
 
 #[test]
-fn wide_layout_compacts_empty_panels_and_preserves_stable_tie_order() {
+fn wide_layout_compacts_empty_panels_and_distributes_relevance() {
     let mut model = Model::new(Settings::default(), AppMode::Full);
     model.focus = Panel::Detail;
     let areas = layout::areas(ratatui::layout::Rect::new(0, 0, 180, 50), &model);
@@ -100,11 +100,12 @@ fn wide_layout_compacts_empty_panels_and_preserves_stable_tie_order() {
 
     model.sessions.items.push(Default::default());
     model.runs.items.push(RunRow {
-        status: "succeeded".into(),
+        status: "running".into(),
         ..RunRow::default()
     });
+    model.attention.push(AttentionItem::default());
     let areas = layout::areas(ratatui::layout::Rect::new(0, 0, 180, 50), &model);
     assert!(areas.sessions.height > 3);
-    assert_eq!(areas.runs.height, 3);
-    assert_eq!(areas.attention.height, 3);
+    assert!(areas.runs.height > areas.sessions.height);
+    assert!(areas.attention.height > areas.runs.height);
 }

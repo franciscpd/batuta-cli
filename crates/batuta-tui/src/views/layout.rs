@@ -85,14 +85,9 @@ pub fn areas(area: Rect, model: &Model) -> Areas {
             .direction(Direction::Horizontal)
             .constraints([Constraint::Percentage(40), Constraint::Percentage(60)])
             .split(rows[1]);
-        let grown = contextual_panel_to_grow(model);
         let left = Layout::default()
             .direction(Direction::Vertical)
-            .constraints([
-                contextual_constraint(grown, Panel::Sessions),
-                contextual_constraint(grown, Panel::Runs),
-                contextual_constraint(grown, Panel::Attention),
-            ])
+            .constraints(contextual_constraints(area.width, model))
             .split(columns[0]);
         Areas {
             mode,
@@ -108,11 +103,28 @@ pub fn areas(area: Rect, model: &Model) -> Areas {
 
 const COMPACT_PANEL_HEIGHT: u16 = 3;
 
+fn contextual_constraints(width: u16, model: &Model) -> [Constraint; 3] {
+    let panels = [Panel::Sessions, Panel::Runs, Panel::Attention];
+    if width < 140 {
+        let grown = contextual_panel_to_grow(model);
+        panels.map(|panel| contextual_constraint(grown, panel))
+    } else {
+        panels.map(|panel| wide_contextual_constraint(model, panel))
+    }
+}
+
 fn contextual_constraint(grown: Option<Panel>, panel: Panel) -> Constraint {
     if grown == Some(panel) {
         Constraint::Fill(1)
     } else {
         Constraint::Length(COMPACT_PANEL_HEIGHT)
+    }
+}
+
+fn wide_contextual_constraint(model: &Model, panel: Panel) -> Constraint {
+    match panel_relevance(model, panel) {
+        0 => Constraint::Length(COMPACT_PANEL_HEIGHT),
+        relevance => Constraint::Fill(relevance.into()),
     }
 }
 
