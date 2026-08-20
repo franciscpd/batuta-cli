@@ -319,6 +319,38 @@ fn ut_707_ut_708_tool_and_error_disclosure_are_reversible_and_human_first() {
         error.find("deployment could not be completed").unwrap() < error.find("× failed").unwrap()
     );
 }
+
+#[test]
+fn ut_732_tool_disclosure_visual_contract_100x30() {
+    insta::assert_snapshot!(
+        "ut_732_tool_collapsed_100x30",
+        render(tool_fixture(), 100, 30)
+    );
+
+    let mut expanded_model = tool_fixture();
+    expanded_model
+        .session_detail_mut()
+        .unwrap()
+        .view
+        .expanded
+        .insert(20);
+    insta::assert_snapshot!(
+        "ut_732_tool_expanded_100x30",
+        render(expanded_model, 100, 30)
+    );
+}
+
+#[test]
+fn ut_712_raw_debug_visual_contract_120x40() {
+    let mut model = tool_fixture();
+    model.session_detail_mut().unwrap().view.raw_debug = true;
+    let output = render(model, 120, 40);
+
+    assert!(output.contains("DEBUG · raw transcript presentation"));
+    assert!(output.contains("entry seq=11 start=10 role=user"));
+    insta::assert_snapshot!("ut_712_raw_debug_120x40", output);
+}
+
 #[test]
 fn ut_680_delivery_one_tail_layout() {
     let output = render(tool_fixture(), 80, 24);

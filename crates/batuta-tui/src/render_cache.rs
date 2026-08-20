@@ -66,11 +66,14 @@ fn render_entry(
         Role::Unknown => "unknown",
         Role::Other(value) => value,
     };
-    lines.push(Line::from(Span::styled(
-        format!("▸ {role}"),
-        theme.emphasis,
-    )));
     if raw_debug {
+        lines.push(Line::from(Span::styled(
+            format!(
+                "entry seq={} start={} role={role}",
+                entry.sequence, entry.start_sequence
+            ),
+            theme.emphasis,
+        )));
         for (index, part) in entry.message.parts.iter().enumerate() {
             lines.push(indented(format!("part[{index}] raw"), theme.muted));
             append_payload(&serialize_part(part), theme.muted, &mut lines);
@@ -81,6 +84,10 @@ fn render_entry(
             usize::from(width.saturating_add(3)).max(1),
         ));
     }
+    lines.push(Line::from(Span::styled(
+        format!("▸ {role}"),
+        theme.emphasis,
+    )));
     for part in &entry.message.parts {
         render_part(part, theme, reasoning_expanded, expanded, &mut lines);
     }

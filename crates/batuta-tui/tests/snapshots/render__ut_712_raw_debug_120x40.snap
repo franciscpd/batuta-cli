@@ -1,0 +1,44 @@
+---
+source: crates/batuta-tui/tests/render.rs
+expression: output
+---
+batuta · batuta-cli · sess-807cee9774b33f68 · batuta · "Analisar e implementar projeto conforme documentação …" · active
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+beginning of transcript
+DEBUG · raw transcript presentation
+entry seq=11 start=10 role=user
+  part[0] raw
+      {
+        "Text": {
+          "text": "Nos vamos analisar para implementar o projeto",
+          "state": "done"
+        }
+      }
+
+entry seq=21 start=20 role=batuta
+  part[0] raw
+      {
+        "Text": {
+          "text": "Vou começar pelo **gate** de entrega.\n\n- ler contrato\n- implementar",
+          "state": "streaming"
+        }
+      }
+  part[1] raw
+      {
+        "Reasoning": {
+          "text": "reason 1\nreason 2\nreason 3\nreason 4\nreason 5\nreason 6\nreason 7\nreason 8\nreason 9\nreason
+          10\nreason 11\nreason 12\nreason 13\nreason 14",
+          "state": "done"
+        }
+      }
+  part[2] raw
+      {
+        "Tool": {
+          "name": "mcp__compozy-hosted-tools__compozy__config_get",
+          "tool_call_id": "tool-1",
+          "state": "output-available",
+          "input": {
+            "path": "loops.inputs.batuta-deliver.auto_commit"
+          },
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+j/k move  Enter expand  t reasoning  D raw debug  G newest  g oldest  q quit                                        live
