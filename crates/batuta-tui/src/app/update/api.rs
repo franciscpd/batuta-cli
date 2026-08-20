@@ -96,6 +96,8 @@ fn failure(model: &mut Model, request: Request, error: String) -> Vec<Cmd> {
             model.overlay = None;
             model.set_sticky_toast(if not_found(&error) {
                 "clarification expired or already answered".into()
+            } else if error.to_lowercase().contains("draining") {
+                "daemon is draining — writes refused".into()
             } else if unavailable(&error) {
                 "clarification service unavailable".into()
             } else if conflict(&error) {
