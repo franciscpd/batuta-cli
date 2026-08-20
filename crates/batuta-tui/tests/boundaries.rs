@@ -165,7 +165,7 @@ fn ut_211_views_reject_forbidden_imports_in_test_modules() {
 }
 
 #[test]
-fn it_007_script_rejects_a_forbidden_client_dependency_and_ci_orders_formatting_first() {
+fn it_007_script_rejects_a_forbidden_dependency_and_ci_provisions_test_tools() {
     let root = workspace_root();
     let temporary = temporary_directory("script");
     fs::create_dir_all(temporary.join("crates/compozy-client/src")).expect("create fixture source");
@@ -203,6 +203,22 @@ fn it_007_script_rejects_a_forbidden_client_dependency_and_ci_orders_formatting_
     assert!(workflow.contains("boundaries:"));
     assert!(workflow.contains("contract:"));
     assert!(workflow.find("cargo fmt --check") < workflow.find("cargo build --workspace"));
+
+    let test_job = workflow
+        .split("  test:\n")
+        .nth(1)
+        .and_then(|jobs| jobs.split("\n  boundaries:").next())
+        .expect("test job");
+    let tools = test_job
+        .find("sudo apt-get update && sudo apt-get install -y ripgrep jq")
+        .expect("test job installs boundary-check tools");
+    let workspace_tests = test_job
+        .find("cargo test --workspace")
+        .expect("workspace tests");
+    assert!(
+        tools < workspace_tests,
+        "tools must be installed before tests"
+    );
 }
 
 #[test]

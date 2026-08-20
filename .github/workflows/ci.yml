@@ -48,6 +48,8 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: ${{ matrix.rust }}
+      - name: Install boundary-check tools
+        run: sudo apt-get update && sudo apt-get install -y ripgrep jq
       - run: cargo test --workspace
 
   boundaries:
