@@ -141,18 +141,8 @@ fn render_part(
             ..
         } => {
             let (activity, style) = tool_status(state.as_deref(), theme);
-            let summary = input.as_ref().and_then(first_scalar).unwrap_or_default();
             lines.push(indented(
-                format!(
-                    "{} {} {name}{}",
-                    activity.marker(),
-                    activity.label(),
-                    if summary.is_empty() {
-                        String::new()
-                    } else {
-                        format!("   {summary}")
-                    }
-                ),
+                format!("{} {} {name}", activity.marker(), activity.label()),
                 style,
             ));
             if expanded {

@@ -20,7 +20,7 @@ fn entry(start: i64, role: Role, parts: Vec<Part>) -> Entry {
         },
     }
 }
-fn model() -> Model {
+fn model_with(entries: Vec<Entry>) -> Model {
     let mut model = Model::tail(SessionHeader {
         workspace: "batuta-cli".into(),
         workspace_id: "ws_e619d7250e618324".into(),
@@ -30,7 +30,23 @@ fn model() -> Model {
         state: "active".into(),
         warning: None,
     });
-    let entries = vec![
+    page_into_detail(
+        model.session_detail_mut().unwrap(),
+        TranscriptPage {
+            entries,
+            epoch: 1,
+            generation: 1,
+            max_sequence: 30,
+            has_older: false,
+            limit: 200,
+            ..Default::default()
+        },
+    );
+    model
+}
+
+fn tool_fixture() -> Model {
+    model_with(vec![
         entry(
             10,
             Role::User,
@@ -107,27 +123,42 @@ fn model() -> Model {
                 },
             ],
         ),
-    ];
-    page_into_detail(
-        model.session_detail_mut().unwrap(),
-        TranscriptPage {
-            entries,
-            epoch: 1,
-            generation: 1,
-            max_sequence: 30,
-            has_older: false,
-            limit: 200,
-            ..Default::default()
-        },
-    );
-    model
+    ])
 }
-fn render(mut model: Model, width: u16, height: u16) -> String {
+
+fn fixture(name: &str) -> Model {
+    match name {
+        "empty" => model_with(Vec::new()),
+        "short" => model_with(vec![
+            entry(10, Role::User, vec![Part::Text { text: "Need a release checklist".into(), state: None }]),
+            entry(20, Role::Assistant, vec![Part::Text { text: "I will verify the release checklist.".into(), state: Some("done".into()) }]),
+        ]),
+        "long" => model_with(vec![
+            entry(10, Role::User, vec![Part::Text { text: "Unicode: café 東京\n  indented continuation\nlong-token-0123456789abcdef0123456789abcdef0123456789abcdef".into(), state: None }]),
+            entry(20, Role::Assistant, vec![Part::Text { text: "Markdown **preserves** whitespace and wraps this deliberately extended conversation without dropping content.".into(), state: Some("streaming".into()) }]),
+        ]),
+        "tool" => tool_fixture(),
+        "error" => model_with(vec![entry(10, Role::Assistant, vec![
+            Part::Text { text: "The deployment could not be completed. Retry after checking the token.".into(), state: None },
+            Part::Tool { name: "deploy".into(), tool_call_id: Some("failed-deploy".into()), state: Some("output-error".into()), input: Some(json!({"path":"/absolute/private/deploy.json"})), output: Some(json!({"diagnostic":"remote returned 403"})), error_text: Some("HTTP 403: authorization failed".into()), title: None },
+        ])]),
+        "attention" => model_with(vec![entry(10, Role::Assistant, vec![
+            Part::Text { text: "A confirmation is required before deleting the cache.".into(), state: None },
+            Part::Permission { data: json!({"request_id":"req-confirm", "turn_id":"turn-confirm", "title":"Delete the build cache", "raw":{"tool_input":{"path":"/tmp/cache"}, "options":[{"decision":"allow-always"}]}}) },
+        ])]),
+        _ => unreachable!("unknown fixture"),
+    }
+}
+fn render_buffer(
+    mut model: Model,
+    width: u16,
+    height: u16,
+) -> (String, Vec<ratatui::buffer::Cell>) {
     update(&mut model, Msg::Resize(width, height));
     let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
     terminal.draw(|frame| views::view(&model, frame)).unwrap();
     let buffer = terminal.backend().buffer();
-    (0..height)
+    let text = (0..height)
         .map(|y| {
             let mut line = String::new();
             for x in 0..width {
@@ -136,18 +167,109 @@ fn render(mut model: Model, width: u16, height: u16) -> String {
             line.trim_end().to_owned()
         })
         .collect::<Vec<_>>()
-        .join("\n")
+        .join("\n");
+    (text, buffer.content.to_vec())
+}
+
+fn render(model: Model, width: u16, height: u16) -> String {
+    render_buffer(model, width, height).0
 }
 
 #[test]
-fn delivery_one_snapshots_are_byte_for_byte() {
-    insta::assert_snapshot!("screen_80x24", render(model(), 80, 24));
-    insta::assert_snapshot!("screen_120x40", render(model(), 120, 40));
-    insta::assert_snapshot!("screen_200x60", render(model(), 200, 60));
+fn ut_732_canonical_render_matrix() {
+    for (fixture_name, required_text) in [
+        ("empty", "no transcript yet"),
+        ("short", "release checklist"),
+        ("long", "Markdown"),
+        ("tool", "file_mutation_unverified"),
+        ("error", "deployment could not be completed"),
+        ("attention", "approval"),
+    ] {
+        for (theme_name, color, variant) in [
+            ("dark", true, ThemeVariant::Dark),
+            ("light", true, ThemeVariant::Light),
+            ("no_color", false, ThemeVariant::Light),
+        ] {
+            for (width, height) in [(90, 30), (120, 40), (180, 50)] {
+                let mut model = fixture(fixture_name);
+                model.theme = Theme::with_variant(color, variant, None);
+                let (output, cells) = render_buffer(model, width, height);
+                assert!(
+                    output.contains(required_text),
+                    "{fixture_name} at {width}x{height} lost required content"
+                );
+                if color {
+                    assert!(
+                        cells
+                            .iter()
+                            .all(|cell| ansi_16_or_reset(cell.fg) && ansi_16_or_reset(cell.bg)),
+                        "{fixture_name} emitted non-ANSI color"
+                    );
+                } else {
+                    assert!(
+                        cells
+                            .iter()
+                            .all(|cell| cell.fg == Color::Reset && cell.bg == Color::Reset),
+                        "NO_COLOR emitted foreground/background styling"
+                    );
+                }
+                insta::assert_snapshot!(
+                    format!("ut_732_{fixture_name}_{theme_name}_{width}x{height}"),
+                    output
+                );
+            }
+        }
+    }
+}
+
+fn ansi_16_or_reset(color: Color) -> bool {
+    matches!(
+        color,
+        Color::Reset
+            | Color::Black
+            | Color::Red
+            | Color::Green
+            | Color::Yellow
+            | Color::Blue
+            | Color::Magenta
+            | Color::Cyan
+            | Color::Gray
+            | Color::DarkGray
+            | Color::LightRed
+            | Color::LightGreen
+            | Color::LightYellow
+            | Color::LightBlue
+            | Color::LightMagenta
+            | Color::LightCyan
+            | Color::White
+    )
+}
+
+#[test]
+fn ut_707_ut_708_tool_and_error_disclosure_are_reversible_and_human_first() {
+    let collapsed = render(tool_fixture(), 120, 40);
+    assert!(collapsed.contains("▶ tool"));
+    assert!(!collapsed.contains("loops.inputs.batuta-deliver.auto_commit"));
+    let mut expanded_model = tool_fixture();
+    expanded_model
+        .session_detail_mut()
+        .unwrap()
+        .view
+        .expanded
+        .insert(20);
+    let expanded = render(expanded_model, 120, 40);
+    assert!(expanded.contains("loops.inputs.batuta-deliver.auto_commit"));
+    insta::assert_snapshot!("ut_732_tool_collapsed", collapsed);
+    insta::assert_snapshot!("ut_732_tool_expanded", expanded);
+
+    let error = render(fixture("error"), 120, 40);
+    assert!(
+        error.find("deployment could not be completed").unwrap() < error.find("× failed").unwrap()
+    );
 }
 #[test]
 fn ut_680_delivery_one_tail_layout() {
-    let output = render(model(), 80, 24);
+    let output = render(tool_fixture(), 80, 24);
     assert!(output.contains("batuta · batuta-cli"));
     assert!(output.contains("file_mutation_unverified"));
     assert!(output.contains("j/k move"));
@@ -155,17 +277,17 @@ fn ut_680_delivery_one_tail_layout() {
 
 #[test]
 fn e2e_700_semantic_terminal_journey() {
-    let mut dark_model = model();
+    let mut dark_model = tool_fixture();
     dark_model.theme = Theme::with_variant(true, ThemeVariant::Dark, None);
     let dark_text = render(dark_model, 120, 40);
-    let mut light_model = model();
+    let mut light_model = tool_fixture();
     light_model.theme = Theme::with_variant(true, ThemeVariant::Light, None);
     assert_eq!(render(light_model, 120, 40), dark_text);
     assert!(dark_text.contains("✓ completed"));
     assert!(dark_text.contains("× failed"));
     assert!(dark_text.contains("▶ tool"));
 
-    let mut no_color_model = model();
+    let mut no_color_model = tool_fixture();
     no_color_model.theme = Theme::with_variant(false, ThemeVariant::Light, None);
     update(&mut no_color_model, Msg::Resize(120, 40));
     let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
