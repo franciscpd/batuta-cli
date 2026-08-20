@@ -126,46 +126,56 @@ fn transcript(model: &mut Model, session: &str, event: TranscriptEvent) -> Vec<C
     };
     match event {
         TranscriptEvent::Snapshot(snapshot) => apply_snapshot(detail, snapshot),
-        TranscriptEvent::Delta(delta) => match detail.transcript.apply_delta(delta.clone()) {
-            Applied::Ok => {
-                detail.view.cache_dirty = true;
-                if detail.view.follow {
-                    detail.view.selection = detail
-                        .transcript
-                        .presentation_rows(detail.view.raw_debug)
-                        .len()
-                        .saturating_sub(1);
-                }
-                Vec::new()
-            }
-            Applied::UnknownStart(_) => {
-                if detail.view.fetching {
+        TranscriptEvent::Delta(delta) => {
+            let raw_updates = delta.entries.len();
+            match detail.transcript.apply_delta(delta.clone()) {
+                Applied::Ok => {
+                    detail.view.cache_dirty = true;
+                    if detail.view.follow {
+                        detail.view.selection = detail
+                            .transcript
+                            .presentation_rows(detail.view.raw_debug)
+                            .len()
+                            .saturating_sub(1);
+                    } else if raw_updates > 0 {
+                        let previous = match detail.view.footer {
+                            FooterState::NewBelow(count) => count,
+                            _ => 0,
+                        };
+                        detail.view.footer =
+                            FooterState::NewBelow(previous.saturating_add(raw_updates));
+                    }
                     Vec::new()
-                } else {
-                    detail.view.fetching = true;
-                    let session = session.to_owned();
-                    let request = model.allocate(|id| crate::cmd::Request::TranscriptPage {
-                        id,
-                        workspace,
-                        session,
-                        before_sequence: None,
-                    });
-                    vec![Cmd::Get(request)]
                 }
+                Applied::UnknownStart(_) => {
+                    if detail.view.fetching {
+                        Vec::new()
+                    } else {
+                        detail.view.fetching = true;
+                        let session = session.to_owned();
+                        let request = model.allocate(|id| crate::cmd::Request::TranscriptPage {
+                            id,
+                            workspace,
+                            session,
+                            before_sequence: None,
+                        });
+                        vec![Cmd::Get(request)]
+                    }
+                }
+                Applied::FenceMismatch => apply_snapshot(
+                    detail,
+                    TranscriptSnapshot {
+                        epoch: delta.epoch,
+                        generation: delta.generation,
+                        entries: delta.entries,
+                        max_sequence: delta.max_sequence.max(delta.cursor),
+                        reset: true,
+                        reason: Some("epoch_mismatch".into()),
+                        ..TranscriptSnapshot::default()
+                    },
+                ),
             }
-            Applied::FenceMismatch => apply_snapshot(
-                detail,
-                TranscriptSnapshot {
-                    epoch: delta.epoch,
-                    generation: delta.generation,
-                    entries: delta.entries,
-                    max_sequence: delta.max_sequence.max(delta.cursor),
-                    reset: true,
-                    reason: Some("epoch_mismatch".into()),
-                    ..TranscriptSnapshot::default()
-                },
-            ),
-        },
+        }
         TranscriptEvent::Stopped(stopped) => {
             detail.view.stopped = true;
             detail.stream = StreamStatus::Stopped;
