@@ -381,3 +381,82 @@ fn ut_730_onboarding_remains_open_until_normal_boot_succeeds() {
         }) if message == "workspace selected; startup failed: service unavailable"
     ));
 }
+
+#[test]
+fn ut_731_onboarding_selects_a_catalog_root_with_a_noncanonical_spelling() {
+    let mut model = batuta_tui::Model::new(
+        Settings {
+            workspace: None,
+            ..Settings::default()
+        },
+        AppMode::Full,
+    );
+    let root = std::env::current_dir().unwrap();
+    model.start_workspace_onboarding(batuta_tui::app::WorkspaceCandidate {
+        name: "batuta-cli".into(),
+        root_dir: root.display().to_string(),
+    });
+    let request = model.allocate(|id| Request::Workspaces { id });
+    let commands = respond(
+        &mut model,
+        request,
+        ApiResponse::Workspaces(vec![Workspace {
+            id: "ws-canonical".into(),
+            name: "batuta-cli".into(),
+            root_dir: root.join("src/..").display().to_string(),
+            ..Workspace::default()
+        }]),
+    );
+
+    assert_eq!(
+        model
+            .workspace
+            .as_ref()
+            .map(|workspace| workspace.id.as_str()),
+        Some("ws-canonical")
+    );
+    assert!(
+        commands
+            .iter()
+            .any(|command| matches!(command, Cmd::Get(Request::Sessions { .. })))
+    );
+}
+
+#[test]
+fn ut_732_unsupported_onboarding_shows_an_escaped_registration_command() {
+    let mut model = batuta_tui::Model::new(
+        Settings {
+            workspace: None,
+            ..Settings::default()
+        },
+        AppMode::Full,
+    );
+    model.start_workspace_onboarding(batuta_tui::app::WorkspaceCandidate {
+        name: "new workspace".into(),
+        root_dir: "/tmp/new workspace's root".into(),
+    });
+    let request = model.allocate(|id| Request::AddWorkspace {
+        id,
+        name: "new workspace".into(),
+        root_dir: "/tmp/new workspace's root".into(),
+    });
+    respond(
+        &mut model,
+        request,
+        ApiResponse::WorkspaceAdded(AddWorkspaceOutcome::Unsupported),
+    );
+
+    let Some(Overlay::WorkspaceOnboarding {
+        adding,
+        message: Some(message),
+        ..
+    }) = model.overlay
+    else {
+        panic!("expected onboarding message");
+    };
+    assert!(!adding);
+    assert_eq!(
+        message,
+        "This daemon cannot add workspaces through its API. Run: compozy workspace add '/tmp/new workspace'\"'\"'s root'"
+    );
+}

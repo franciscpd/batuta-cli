@@ -176,7 +176,7 @@ fn apply(model: &mut Model, request: Request, response: ApiResponse) -> Vec<Cmd>
             {
                 if let Some(item) = items
                     .into_iter()
-                    .find(|item| item.root_dir == candidate.root_dir)
+                    .find(|item| same_workspace_root(&item.root_dir, &candidate.root_dir))
                 {
                     return super::picker::switch(
                         model,
@@ -217,7 +217,12 @@ fn apply(model: &mut Model, request: Request, response: ApiResponse) -> Vec<Cmd>
                 }) = &mut model.overlay
                 {
                     *adding = false;
-                    *message = Some("This daemon cannot add workspaces through its API. Run: compozy workspace add <path>".into());
+                    *message = model.startup_candidate.as_ref().map(|candidate| {
+                        format!(
+                            "This daemon cannot add workspaces through its API. Run: compozy workspace add {}",
+                            shell_escape(&candidate.root_dir)
+                        )
+                    });
                 }
                 Vec::new()
             }
@@ -410,6 +415,26 @@ fn apply(model: &mut Model, request: Request, response: ApiResponse) -> Vec<Cmd>
             commands
         }
         (_, _) => Vec::new(),
+    }
+}
+
+fn same_workspace_root(left: &str, right: &str) -> bool {
+    left == right
+        || std::fs::canonicalize(left)
+            .ok()
+            .zip(std::fs::canonicalize(right).ok())
+            .is_some_and(|(left, right)| left == right)
+}
+
+fn shell_escape(value: &str) -> String {
+    if !value.is_empty()
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || b"_+-=.,/:@".contains(&byte))
+    {
+        value.into()
+    } else {
+        format!("'{}'", value.replace('\'', "'\"'\"'"))
     }
 }
 
