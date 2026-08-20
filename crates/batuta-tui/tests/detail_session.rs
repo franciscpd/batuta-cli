@@ -181,6 +181,56 @@ fn ut_717_off_tail_deltas_preserve_the_anchor_and_count_raw_updates() {
 }
 
 #[test]
+fn ut_717_reset_off_tail_remaps_to_the_selected_source() {
+    let mut model = detail_model("active", false);
+    let snapshot: TranscriptSnapshot = serde_json::from_value(serde_json::json!({
+        "epoch": 1,
+        "generation": 1,
+        "max_sequence": 3,
+        "entries": [
+            {"start_sequence": 1, "sequence": 1, "message": {"id": "one", "role": "assistant", "parts": [{"type": "text", "text": "one"}]}},
+            {"start_sequence": 2, "sequence": 2, "message": {"id": "two", "role": "assistant", "parts": [{"type": "text", "text": "two"}]}},
+            {"start_sequence": 3, "sequence": 3, "message": {"id": "three", "role": "assistant", "parts": [{"type": "text", "text": "three"}]}}
+        ]
+    }))
+    .unwrap();
+    update(
+        &mut model,
+        Msg::Stream {
+            id: StreamId::Transcript("sess-a".into()),
+            event: AnyStreamEvent::Transcript(TranscriptEvent::Snapshot(snapshot)),
+        },
+    );
+    let detail = model.session_detail_mut().unwrap();
+    detail.view.follow = false;
+    detail.view.selection = 1;
+
+    let reset: TranscriptSnapshot = serde_json::from_value(serde_json::json!({
+        "epoch": 1,
+        "generation": 2,
+        "max_sequence": 3,
+        "reset": true,
+        "entries": [
+            {"start_sequence": 2, "sequence": 2, "message": {"id": "two", "role": "assistant", "parts": [{"type": "text", "text": "two"}]}},
+            {"start_sequence": 3, "sequence": 3, "message": {"id": "three", "role": "assistant", "parts": [{"type": "text", "text": "three"}]}}
+        ]
+    }))
+    .unwrap();
+    update(
+        &mut model,
+        Msg::Stream {
+            id: StreamId::Transcript("sess-a".into()),
+            event: AnyStreamEvent::Transcript(TranscriptEvent::Snapshot(reset)),
+        },
+    );
+
+    let detail = model.session_detail().unwrap();
+    assert!(!detail.view.follow);
+    assert_eq!(detail.view.selection, 0);
+    assert_eq!(detail.view.selected_source_start_sequence, Some(2));
+}
+
+#[test]
 fn ut_554_switching_sessions_stops_old_starts_new_and_drops_state() {
     let mut model = detail_model("active", false);
     model

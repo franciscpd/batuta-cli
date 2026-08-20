@@ -2,7 +2,7 @@ use crate::{
     app::model::{FooterState, Model, StreamStatus},
     cmd::{Cmd, StreamId},
     msg::AnyStreamEvent,
-    transcript::Applied,
+    transcript::{Applied, PresentationRow},
 };
 use compozy_client::{Error, StreamEvent, TranscriptEvent, types::TranscriptSnapshot};
 
@@ -226,6 +226,9 @@ fn apply_snapshot(
     let reset = snapshot.reset;
     let reason = snapshot.reason.clone().unwrap_or_else(|| "reset".into());
     let old_len = detail.transcript.len();
+    let selected_source = (!detail.view.follow)
+        .then(|| selected_source_start_sequence(detail))
+        .flatten();
     detail.transcript.apply_snapshot(snapshot);
     detail.view.cache_dirty = true;
     if detail.view.follow {
@@ -239,6 +242,9 @@ fn apply_snapshot(
         if added > 0 {
             detail.view.footer = FooterState::NewBelow(added);
         }
+        if let Some(start_sequence) = selected_source {
+            remap_selection(detail, start_sequence);
+        }
     }
     if reset {
         detail.view.footer = FooterState::Resynchronized(reason);
@@ -249,4 +255,70 @@ fn apply_snapshot(
     } else {
         Vec::new()
     }
+}
+
+fn selected_source_start_sequence(detail: &crate::app::model::SessionDetail) -> Option<i64> {
+    let entries = detail.transcript.entries();
+    let rows = detail.transcript.presentation_rows(detail.view.raw_debug);
+    let row = rows.get(detail.view.selection)?;
+    detail
+        .view
+        .selected_source_start_sequence
+        .filter(|start_sequence| row_contains_start_sequence(row, &entries, *start_sequence))
+        .or_else(|| {
+            entries
+                .get(row.first_entry_index())
+                .map(|entry| entry.start_sequence)
+        })
+}
+
+fn remap_selection(detail: &mut crate::app::model::SessionDetail, start_sequence: i64) {
+    let entries = detail.transcript.entries();
+    let rows = detail.transcript.presentation_rows(detail.view.raw_debug);
+    let selected = rows
+        .iter()
+        .position(|row| row_contains_start_sequence(row, &entries, start_sequence))
+        .or_else(|| {
+            rows.iter()
+                .enumerate()
+                .filter_map(|(index, row)| {
+                    row_start_sequences(row, &entries)
+                        .map(|sequence| sequence.abs_diff(start_sequence))
+                        .min()
+                        .map(|distance| (index, distance))
+                })
+                .min_by_key(|(_, distance)| *distance)
+                .map(|(index, _)| index)
+        });
+    if let Some(selection) = selected {
+        detail.view.selection = selection;
+        detail.view.selected_source_start_sequence = rows.get(selection).and_then(|row| {
+            row_start_sequences(row, &entries)
+                .min_by_key(|sequence| sequence.abs_diff(start_sequence))
+        });
+    } else {
+        detail.view.selection = 0;
+        detail.view.selected_source_start_sequence = None;
+    }
+}
+
+fn row_contains_start_sequence(
+    row: &PresentationRow,
+    entries: &[&compozy_client::types::Entry],
+    start_sequence: i64,
+) -> bool {
+    row_start_sequences(row, entries).any(|sequence| sequence == start_sequence)
+}
+
+fn row_start_sequences<'a>(
+    row: &'a PresentationRow,
+    entries: &'a [&'a compozy_client::types::Entry],
+) -> impl Iterator<Item = i64> + 'a {
+    let indexes: &[usize] = match row {
+        PresentationRow::Entry { entry_index } => std::slice::from_ref(entry_index),
+        PresentationRow::Group { entry_indexes, .. } => entry_indexes,
+    };
+    indexes
+        .iter()
+        .filter_map(|index| entries.get(*index).map(|entry| entry.start_sequence))
 }
