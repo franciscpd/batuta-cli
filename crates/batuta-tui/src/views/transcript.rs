@@ -1,4 +1,7 @@
-use crate::app::{FooterState, Model, RenderCacheKey};
+use crate::{
+    app::{FooterState, Model, RenderCacheKey},
+    transcript::PresentationRow,
+};
 use ratatui::{
     Frame,
     layout::Rect,
@@ -11,13 +14,14 @@ pub fn visible_entry_range(model: &Model, height: u16) -> Range<usize> {
     let Some(detail) = model.session_detail() else {
         return 0..0;
     };
+    let rows = detail.transcript.presentation_rows(detail.view.raw_debug);
     let visible = usize::from(height).saturating_add(2);
     let start = if detail.view.follow {
-        detail.transcript.len().saturating_sub(visible)
+        rows.len().saturating_sub(visible)
     } else {
         detail.view.selection.saturating_sub(visible / 2)
     };
-    start..(start + visible).min(detail.transcript.len())
+    start..(start + visible).min(rows.len())
 }
 pub fn render(model: &Model, frame: &mut Frame<'_>, area: Rect) {
     let Some(detail) = model.session_detail() else {
@@ -59,30 +63,62 @@ pub fn render(model: &Model, frame: &mut Frame<'_>, area: Rect) {
             model.theme.warning,
         ));
     }
-    for (index, entry) in detail
+    let entries = detail.transcript.entries();
+    macro_rules! render_cached_entry {
+        ($entry:expr, $selected:expr) => {{
+            let entry = $entry;
+            let key = RenderCacheKey::for_entry(
+                entry,
+                model.size.0.saturating_sub(4),
+                detail.view.reasoning_expanded,
+                detail.view.raw_debug,
+                detail.view.expanded.contains(&entry.start_sequence),
+                model.theme.color,
+                model.theme.variant,
+            );
+            if let Some(text) = detail.view.render_cache.get(&key) {
+                for mut line in text.lines.clone() {
+                    if $selected {
+                        line = line.style(model.theme.selection);
+                    }
+                    lines.push(line);
+                }
+            }
+        }};
+    }
+    for (index, row) in detail
         .transcript
-        .entries()
+        .presentation_rows(detail.view.raw_debug)
         .into_iter()
         .enumerate()
         .take(range.end)
         .skip(start)
     {
-        let key = RenderCacheKey {
-            start_sequence: entry.start_sequence,
-            sequence: entry.sequence,
-            width: model.size.0.saturating_sub(4),
-            reasoning_expanded: detail.view.reasoning_expanded,
-            raw_debug: detail.view.raw_debug,
-            expanded: detail.view.expanded.contains(&entry.start_sequence),
-            color: model.theme.color,
-            theme: model.theme.variant,
-        };
-        if let Some(text) = detail.view.render_cache.get(&key) {
-            for mut line in text.lines.clone() {
-                if index == detail.view.selection {
-                    line = line.style(model.theme.selection);
+        let selected = index == detail.view.selection;
+        match row {
+            PresentationRow::Entry { entry_index } => {
+                render_cached_entry!(entries[entry_index], selected);
+            }
+            PresentationRow::Group {
+                entry_indexes,
+                label,
+            } => {
+                let first = entries[entry_indexes[0]];
+                if detail.view.expanded.contains(&first.start_sequence) {
+                    for entry_index in entry_indexes {
+                        render_cached_entry!(entries[entry_index], selected);
+                    }
+                } else {
+                    let line = Line::styled(
+                        format!("▶ {} {}  Enter expand", entry_indexes.len(), label),
+                        model.theme.muted,
+                    );
+                    lines.push(if selected {
+                        line.style(model.theme.selection)
+                    } else {
+                        line
+                    });
                 }
-                lines.push(line);
             }
         }
     }

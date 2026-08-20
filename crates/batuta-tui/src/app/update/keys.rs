@@ -313,7 +313,8 @@ fn detail_key(model: &mut Model, key: KeyEvent) -> Vec<Cmd> {
     let Some(detail) = model.session_detail_mut() else {
         return Vec::new();
     };
-    let len = detail.transcript.len();
+    let rows = detail.transcript.presentation_rows(detail.view.raw_debug);
+    let len = rows.len();
     match key.code {
         KeyCode::Char('j') | KeyCode::Down => {
             if len > 0 {
@@ -340,14 +341,26 @@ fn detail_key(model: &mut Model, key: KeyEvent) -> Vec<Cmd> {
         }
         KeyCode::Char('D') => {
             detail.view.raw_debug = !detail.view.raw_debug;
+            detail.view.selection = detail.view.selection.min(
+                detail
+                    .transcript
+                    .presentation_rows(detail.view.raw_debug)
+                    .len()
+                    .saturating_sub(1),
+            );
             detail.view.cache_dirty = true;
         }
         KeyCode::Char('i') => detail.composer.focused = true,
         KeyCode::Enter => {
-            if let Some(entry) = detail
-                .transcript
-                .entries()
-                .get(detail.view.selection)
+            let selected_start = rows.get(detail.view.selection).and_then(|row| {
+                detail
+                    .transcript
+                    .entries()
+                    .get(row.first_entry_index())
+                    .map(|entry| entry.start_sequence)
+            });
+            if let Some(entry) = selected_start
+                .and_then(|start_sequence| detail.transcript.entry(start_sequence))
                 .filter(|entry| entry_has_expandable_part(entry))
             {
                 if !detail.view.expanded.remove(&entry.start_sequence) {

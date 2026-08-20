@@ -288,6 +288,29 @@ pub struct RenderCacheKey {
     pub theme: ThemeVariant,
 }
 
+impl RenderCacheKey {
+    pub fn for_entry(
+        entry: &compozy_client::types::Entry,
+        width: u16,
+        reasoning_expanded: bool,
+        raw_debug: bool,
+        expanded: bool,
+        color: bool,
+        theme: ThemeVariant,
+    ) -> Self {
+        Self {
+            start_sequence: entry.start_sequence,
+            sequence: entry.sequence,
+            width,
+            reasoning_expanded,
+            raw_debug,
+            expanded,
+            color,
+            theme,
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct SessionDetail {
     pub session: Session,

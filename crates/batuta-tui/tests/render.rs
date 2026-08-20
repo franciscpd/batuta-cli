@@ -176,6 +176,58 @@ fn render(model: Model, width: u16, height: u16) -> String {
 }
 
 #[test]
+fn ut_709_adjacent_operational_updates_are_losslessly_grouped() {
+    let entries = (1..=6)
+        .map(|sequence| {
+            entry(
+                sequence,
+                Role::Assistant,
+                vec![Part::Tool {
+                    name: format!("status-{sequence}"),
+                    tool_call_id: None,
+                    state: Some("completed".into()),
+                    input: None,
+                    output: None,
+                    error_text: None,
+                    title: None,
+                }],
+            )
+        })
+        .collect();
+    let collapsed = model_with(entries);
+    assert!(render(collapsed, 120, 40).contains("▶ 6 tool updates · completed  Enter expand"));
+
+    let entries = (1..=6)
+        .map(|sequence| {
+            entry(
+                sequence,
+                Role::Assistant,
+                vec![Part::Tool {
+                    name: format!("status-{sequence}"),
+                    tool_call_id: None,
+                    state: Some("completed".into()),
+                    input: None,
+                    output: None,
+                    error_text: None,
+                    title: None,
+                }],
+            )
+        })
+        .collect();
+    let mut expanded = model_with(entries);
+    expanded
+        .session_detail_mut()
+        .unwrap()
+        .view
+        .expanded
+        .insert(1);
+    let expanded = render(expanded, 120, 40);
+    for sequence in 1..=6 {
+        assert!(expanded.contains(&format!("status-{sequence}")));
+    }
+}
+
+#[test]
 fn ut_732_canonical_render_matrix() {
     for (fixture_name, required_text) in [
         ("empty", "no transcript yet"),

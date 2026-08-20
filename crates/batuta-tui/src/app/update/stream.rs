@@ -130,7 +130,11 @@ fn transcript(model: &mut Model, session: &str, event: TranscriptEvent) -> Vec<C
             Applied::Ok => {
                 detail.view.cache_dirty = true;
                 if detail.view.follow {
-                    detail.view.selection = detail.transcript.len().saturating_sub(1);
+                    detail.view.selection = detail
+                        .transcript
+                        .presentation_rows(detail.view.raw_debug)
+                        .len()
+                        .saturating_sub(1);
                 }
                 Vec::new()
             }
@@ -215,7 +219,11 @@ fn apply_snapshot(
     detail.transcript.apply_snapshot(snapshot);
     detail.view.cache_dirty = true;
     if detail.view.follow {
-        detail.view.selection = detail.transcript.len().saturating_sub(1);
+        detail.view.selection = detail
+            .transcript
+            .presentation_rows(detail.view.raw_debug)
+            .len()
+            .saturating_sub(1);
     } else {
         let added = detail.transcript.len().saturating_sub(old_len);
         if added > 0 {
