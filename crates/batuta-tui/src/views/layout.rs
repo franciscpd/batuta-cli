@@ -64,25 +64,12 @@ pub fn areas(area: Rect, model: &Model) -> Areas {
             footer: rows[2],
         };
     }
-    let columns = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints(if mode == LayoutMode::Compact {
-            [Constraint::Length(30), Constraint::Min(50)]
-        } else {
-            [Constraint::Percentage(40), Constraint::Percentage(60)]
-        })
-        .split(rows[1]);
     if mode == LayoutMode::Compact {
-        let shown = if model.focus == Panel::Detail {
-            model.last_list_focus
-        } else {
-            model.focus
-        };
-        let (sessions, runs, attention) = match shown {
-            Panel::Sessions => (columns[0], zero, zero),
-            Panel::Runs => (zero, columns[0], zero),
-            Panel::Attention => (zero, zero, columns[0]),
-            Panel::Detail => (columns[0], zero, zero),
+        let (sessions, runs, attention, detail) = match model.focus {
+            Panel::Sessions => (rows[1], zero, zero, zero),
+            Panel::Runs => (zero, rows[1], zero, zero),
+            Panel::Attention => (zero, zero, rows[1], zero),
+            Panel::Detail => (zero, zero, zero, rows[1]),
         };
         Areas {
             mode,
@@ -90,10 +77,14 @@ pub fn areas(area: Rect, model: &Model) -> Areas {
             sessions,
             runs,
             attention,
-            detail: columns[1],
+            detail,
             footer: rows[2],
         }
     } else {
+        let columns = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([Constraint::Percentage(40), Constraint::Percentage(60)])
+            .split(rows[1]);
         let left = Layout::default()
             .direction(Direction::Vertical)
             .constraints([

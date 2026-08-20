@@ -50,3 +50,18 @@ fn ut_433_resize_closes_overlay_and_preserves_panels() {
     update(&mut model, Msg::Resize(100, 30));
     assert_eq!(model.focus, Panel::Runs);
 }
+
+#[test]
+fn compact_layout_allocates_content_to_only_the_focused_panel() {
+    let mut model = Model::new(Settings::default(), AppMode::Full);
+    let content = layout::areas(ratatui::layout::Rect::new(0, 0, 90, 30), &model);
+    assert_eq!(content.sessions.width, 90);
+    assert_eq!(content.detail.width, 0);
+
+    model.focus = Panel::Detail;
+    let content = layout::areas(ratatui::layout::Rect::new(0, 0, 90, 30), &model);
+    assert_eq!(content.sessions.width, 0);
+    assert_eq!(content.runs.width, 0);
+    assert_eq!(content.attention.width, 0);
+    assert_eq!(content.detail.width, 90);
+}
