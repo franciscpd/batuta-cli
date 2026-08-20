@@ -170,7 +170,7 @@ fn operational_kind(entry: &Entry) -> Option<String> {
     match &entry.message.parts[0] {
         Part::Tool {
             state, error_text, ..
-        } if error_text.is_none() => Some(format!(
+        } if error_text.is_none() && !is_failed_tool_state(state.as_deref()) => Some(format!(
             "tool updates · {}",
             state.as_deref().unwrap_or("unknown")
         )),
@@ -182,6 +182,10 @@ fn operational_kind(entry: &Entry) -> Option<String> {
         )),
         _ => None,
     }
+}
+
+fn is_failed_tool_state(state: Option<&str>) -> bool {
+    matches!(state, Some("output-error"))
 }
 
 #[cfg(test)]
@@ -285,6 +289,32 @@ mod tests {
                 .presentation_rows(false)
                 .iter()
                 .all(|row| matches!(row, PresentationRow::Entry { .. }))
+        );
+    }
+
+    #[test]
+    fn failed_tools_without_error_text_are_not_grouped() {
+        let transcript = transcript((1..=2).map(|sequence| {
+            entry(
+                sequence,
+                Part::Tool {
+                    name: "deploy".into(),
+                    tool_call_id: None,
+                    state: Some("output-error".into()),
+                    input: None,
+                    output: None,
+                    error_text: None,
+                    title: None,
+                },
+            )
+        }));
+
+        assert_eq!(
+            transcript.presentation_rows(false),
+            vec![
+                PresentationRow::Entry { entry_index: 0 },
+                PresentationRow::Entry { entry_index: 1 },
+            ]
         );
     }
 }
