@@ -1,3 +1,8 @@
+## [v0.1.0-beta.3] - 2026-08-20
+
+### 🐛 Bug Fixes
+
+- *(ci)* Allow managed release workflow edits
 ## [v0.1.0-beta.2] - 2026-08-20
 
 ### 🚀 Features
@@ -16,6 +21,10 @@
 - *(tui)* Report draining clarification writes
 - *(ci)* Install pinned daemon asset
 - *(ci)* Provision boundary tools in tests
+
+### 💼 Other
+
+- V0.1.0-beta.2
 
 ### 🧪 Testing
 
