@@ -58,6 +58,8 @@ pub fn render(model: &Model, frame: &mut Frame<'_>) {
             adding,
             booting,
             message,
+            technical_details,
+            details_expanded,
             ..
         } => {
             let (title, action) = if *booting {
@@ -81,11 +83,20 @@ pub fn render(model: &Model, frame: &mut Frame<'_>) {
                 )
             };
             let message = message.as_deref().unwrap_or("");
+            let details = technical_details
+                .as_deref()
+                .map_or(String::new(), |details| {
+                    if *details_expanded {
+                        format!("\n\nTechnical details\n{details}\n[d] hide details")
+                    } else {
+                        "\n\n[d] show technical details".into()
+                    }
+                });
             (
                 title.into(),
                 format!(
-                    "Name   {}\nPath   {}\n\n{}\n{}",
-                    candidate.name, candidate.root_dir, action, message
+                    "Name   {}\nPath   {}\n\n{}\n{}{}",
+                    candidate.name, candidate.root_dir, action, message, details
                 ),
                 0,
             )

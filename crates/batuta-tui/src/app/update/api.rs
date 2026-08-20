@@ -4,7 +4,7 @@ use crate::{
         panels::{attention, runs, sessions},
     },
     cmd::{Cmd, Request, RequestId, StreamId, TimerId},
-    msg::{ApiResponse, ApiResult},
+    msg::{ApiError, ApiResponse, ApiResult},
 };
 use compozy_client::{
     RunControl, TaskVerb,
@@ -31,14 +31,14 @@ pub(super) fn api(model: &mut Model, id: RequestId, result: ApiResult) -> Vec<Cm
     }
 }
 
-fn failure(model: &mut Model, request: Request, error: String) -> Vec<Cmd> {
+fn failure(model: &mut Model, request: Request, error: ApiError) -> Vec<Cmd> {
     model.dirty = true;
-    if let Some(commands) = model.fail_workspace_boot(request.id(), error.clone()) {
+    if let Some(commands) = model.fail_workspace_boot(request.id(), error.display_text()) {
         return commands;
     }
     match &request {
         Request::AddWorkspace { .. } => {
-            if conflict(&error) {
+            if conflict(&error.display_text()) {
                 let request = model.allocate(|id| Request::Workspaces { id });
                 return vec![Cmd::Get(request)];
             }
@@ -47,18 +47,22 @@ fn failure(model: &mut Model, request: Request, error: String) -> Vec<Cmd> {
                 confirming,
                 refresh_required,
                 message,
+                technical_details,
+                details_expanded,
                 ..
             }) = &mut model.overlay
             {
                 *adding = false;
                 *confirming = false;
-                let indeterminate = is_indeterminate_registration_error(&error);
+                let indeterminate = is_indeterminate_registration_error(&error.display_text());
                 *refresh_required = indeterminate;
                 *message = Some(if indeterminate {
                     "workspace was not confirmed added — connection lost".into()
                 } else {
-                    format!("registration failed — {error}")
+                    format!("registration failed — {}", error.message)
                 });
+                *technical_details = error.technical_details();
+                *details_expanded = false;
             }
             Vec::new()
         }
@@ -74,7 +78,7 @@ fn failure(model: &mut Model, request: Request, error: String) -> Vec<Cmd> {
                 );
                 return Vec::new();
             }
-            model.set_sticky_toast(error);
+            model.set_sticky_toast(error.display_text());
             Vec::new()
         }
         Request::Status { .. } => {
@@ -84,25 +88,27 @@ fn failure(model: &mut Model, request: Request, error: String) -> Vec<Cmd> {
         }
         Request::Runs { .. } => {
             model.runs_stale = true;
-            model.set_sticky_toast(error);
+            model.set_sticky_toast(error.display_text());
             runs::any_live(model)
                 .then(|| Cmd::After(Duration::from_secs(5), TimerId::RunsPoll))
                 .into_iter()
                 .collect()
         }
-        Request::Overview { .. } if unavailable(&error) => {
+        Request::Overview { .. } if unavailable(&error.display_text()) => {
             model.attention_overview_unavailable = true;
             attention::rebuild(model);
             Vec::new()
         }
         Request::CreateSession { agent, .. } => {
             model.create_session_pending = false;
-            let text = if unavailable(&error) {
+            let text = if unavailable(&error.display_text()) {
                 "daemon is draining".into()
-            } else if error.contains("400") || error.to_lowercase().contains("agent") {
+            } else if error.display_text().contains("400")
+                || error.message.to_lowercase().contains("agent")
+            {
                 format!("agent {agent} not found in this workspace")
             } else {
-                error
+                error.display_text()
             };
             model.set_sticky_toast(text);
             Vec::new()
@@ -112,63 +118,63 @@ fn failure(model: &mut Model, request: Request, error: String) -> Vec<Cmd> {
         } => {
             model.prompt_pending = false;
             model.failed_prompt = Some((session.clone(), prompt.clone()));
-            model.set_sticky_toast(prompt_failure(&error));
+            model.set_sticky_toast(prompt_failure(&error.display_text()));
             Vec::new()
         }
         Request::CancelPrompt { .. } => {
-            model.set_sticky_toast(clean_error(&error));
+            model.set_sticky_toast(clean_error(&error.display_text()));
             Vec::new()
         }
         Request::Approve {
             session, request, ..
         } => {
-            if not_found(&error) {
+            if not_found(&error.display_text()) {
                 if let Some(items) = model.attention_permissions.get_mut(session) {
                     items.retain(|item| item.request_id != request.request_id);
                 }
                 attention::rebuild(model);
             }
-            model.set_sticky_toast(if conflict(&error) {
+            model.set_sticky_toast(if conflict(&error.display_text()) {
                 "already decided".into()
             } else {
-                error
+                error.display_text()
             });
             attention::refresh(model)
         }
         Request::AnswerClarification { .. } => {
             model.overlay = None;
-            model.set_sticky_toast(if not_found(&error) {
+            model.set_sticky_toast(if not_found(&error.display_text()) {
                 "clarification expired or already answered".into()
-            } else if error.to_lowercase().contains("draining") {
+            } else if error.message.to_lowercase().contains("draining") {
                 "daemon is draining — writes refused".into()
-            } else if unavailable(&error) {
+            } else if unavailable(&error.display_text()) {
                 "clarification service unavailable".into()
-            } else if conflict(&error) {
-                clean_error(&error)
+            } else if conflict(&error.display_text()) {
+                clean_error(&error.display_text())
             } else {
-                error
+                error.display_text()
             });
             attention::refresh(model)
         }
         Request::TaskVerb { .. } => {
-            model.set_sticky_toast(error);
+            model.set_sticky_toast(error.display_text());
             attention::refresh(model)
         }
         Request::RunControl { workspace, run, .. } | Request::RunApprove { workspace, run, .. } => {
-            model.set_sticky_toast(clean_error(&error));
+            model.set_sticky_toast(clean_error(&error.display_text()));
             refetch_run(model, workspace, run)
         }
         Request::Sessions { .. } => {
-            model.set_sticky_toast(error);
+            model.set_sticky_toast(error.display_text());
             Vec::new()
         }
-        Request::Run { .. } if not_found(&error) => {
+        Request::Run { .. } if not_found(&error.display_text()) => {
             model.detail = Detail::Empty;
-            model.set_sticky_toast(clean_error(&error));
+            model.set_sticky_toast(clean_error(&error.display_text()));
             Vec::new()
         }
         _ => {
-            model.set_sticky_toast(error);
+            model.set_sticky_toast(error.display_text());
             Vec::new()
         }
     }

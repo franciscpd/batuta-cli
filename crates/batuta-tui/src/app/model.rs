@@ -381,6 +381,8 @@ pub enum Overlay {
         booting: bool,
         refresh_required: bool,
         message: Option<String>,
+        technical_details: Option<String>,
+        details_expanded: bool,
     },
     Clarify {
         session_id: String,
@@ -593,6 +595,8 @@ impl Model {
             booting: false,
             refresh_required: false,
             message: None,
+            technical_details: None,
+            details_expanded: false,
         });
         self.dirty = true;
     }
@@ -626,6 +630,8 @@ impl Model {
             booting: false,
             refresh_required: false,
             message: Some(format!("workspace selected; startup failed: {error}")),
+            technical_details: None,
+            details_expanded: false,
         });
         let commands = self.all_stop_cmds();
         self.active_streams.clear();

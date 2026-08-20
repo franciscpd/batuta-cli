@@ -177,6 +177,7 @@ fn ut_616_bad_cursor_refetches_latest_and_marks_reset() {
                 message: "bad cursor".into(),
                 code: Some("bad_cursor".into()),
                 details: None,
+                diagnostic: None,
             })),
         },
     );

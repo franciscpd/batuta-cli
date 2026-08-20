@@ -471,6 +471,8 @@ fn onboarding_key(model: &mut Model, key: KeyEvent) -> Vec<Cmd> {
         booting,
         refresh_required,
         message,
+        details_expanded,
+        ..
     }) = &mut model.overlay
     else {
         return Vec::new();
@@ -498,6 +500,12 @@ fn onboarding_key(model: &mut Model, key: KeyEvent) -> Vec<Cmd> {
         KeyCode::Char('a') if !*confirming => {
             *confirming = true;
             *message = None;
+            *details_expanded = false;
+            model.dirty = true;
+            Vec::new()
+        }
+        KeyCode::Char('d') => {
+            *details_expanded = !*details_expanded;
             model.dirty = true;
             Vec::new()
         }

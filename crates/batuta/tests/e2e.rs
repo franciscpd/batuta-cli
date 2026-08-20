@@ -1827,6 +1827,23 @@ fn e2e_706_unsupported_and_rejected_registration_remain_actionable() {
         let rejected = tui.screen_text();
         assert!(rejected.contains("registration failed"), "{rejected}");
         assert!(
+            rejected.contains("workspace could not be added"),
+            "{rejected}"
+        );
+        assert!(!rejected.contains("workspace_invalid"), "{rejected}");
+        assert!(
+            !rejected.contains("root_dir must be canonical"),
+            "{rejected}"
+        );
+        assert!(
+            rejected.contains("[d] show technical details"),
+            "{rejected}"
+        );
+        tui.send(b"d");
+        tui.wait_for_screen(Duration::from_secs(5), |screen| {
+            screen.contains("workspace_invalid") && screen.contains("root_dir must be canonical")
+        });
+        assert!(
             rejected.contains("[w] choose an existing workspace"),
             "{rejected}"
         );
