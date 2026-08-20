@@ -41,7 +41,6 @@ pub enum TimerId {
     RunsPoll,
     AttentionPoll,
     CatalogDebounce,
-    CatalogPoll,
     ToastExpiry,
     QuitGuard,
     DetailSwitchDebounce,

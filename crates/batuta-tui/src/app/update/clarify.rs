@@ -64,11 +64,14 @@ pub(super) fn key(model: &mut Model, key: KeyEvent) -> Vec<Cmd> {
             } else {
                 ClarifyAnswer::Choice(*selected)
             };
+            let session = session_id.clone();
+            let request_id = request_id.clone();
+            if model.refuse_write("answer") {
+                return Vec::new();
+            }
             let Some(workspace) = model.workspace.as_ref().map(|value| value.id.clone()) else {
                 return Vec::new();
             };
-            let session = session_id.clone();
-            let request_id = request_id.clone();
             let request = model.allocate(|id| Request::AnswerClarification {
                 id,
                 workspace,

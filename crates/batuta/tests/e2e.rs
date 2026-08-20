@@ -1,7 +1,20 @@
 use assert_cmd::Command;
-use compozy_testkit::{Daemon, StartOutcome};
+use compozy_testkit::{Daemon, DaemonOptions, StartOutcome};
 use predicates::prelude::*;
-use std::sync::OnceLock;
+#[cfg(unix)]
+use std::os::unix::process::CommandExt;
+use std::{
+    io::{Read, Write},
+    net::{SocketAddr, TcpListener, TcpStream},
+    process::{Child, Command as ProcessCommand, Stdio},
+    sync::{
+        Arc, Barrier, Mutex, OnceLock,
+        atomic::{AtomicBool, Ordering},
+        mpsc::{Receiver, SyncSender, sync_channel},
+    },
+    thread::JoinHandle,
+    time::{Duration, Instant},
+};
 use wiremock::{
     Mock, MockServer, ResponseTemplate,
     matchers::{method, path},
@@ -41,6 +54,602 @@ fn daemon_or_skip() -> Option<Box<Daemon>> {
 
 fn command() -> Command {
     Command::cargo_bin("batuta").expect("batuta binary")
+}
+
+#[cfg(unix)]
+fn retry_screen_tests_allowed() -> bool {
+    !std::env::current_dir()
+        .ok()
+        .as_deref()
+        .is_some_and(|cwd| cwd.ancestors().any(|path| path.join(".compozy").exists()))
+}
+
+#[cfg(unix)]
+fn free_tcp_addr() -> String {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("reserve TCP port");
+    let address = listener.local_addr().expect("read reserved TCP port");
+    drop(listener);
+    address.to_string()
+}
+
+#[cfg(unix)]
+fn shell_quote(value: impl AsRef<std::path::Path>) -> String {
+    format!(
+        "'{}'",
+        value.as_ref().display().to_string().replace('\'', "'\\''")
+    )
+}
+
+#[cfg(unix)]
+const PTY_COLUMNS: u16 = 120;
+
+#[cfg(unix)]
+const PTY_ROWS: u16 = 40;
+
+#[cfg(unix)]
+const PTY_CLEANUP_TIMEOUT: Duration = Duration::from_secs(5);
+
+#[cfg(unix)]
+const PTY_QUIT_GRACE: Duration = Duration::from_millis(250);
+
+#[cfg(unix)]
+fn retry_screen_process(tcp_addr: &str) -> RetryScreen {
+    RetryScreen::start(tcp_addr)
+}
+
+#[cfg(unix)]
+struct LiveTui {
+    child: Child,
+    output: Arc<Mutex<Vec<u8>>>,
+    readers: Vec<JoinHandle<()>>,
+}
+
+#[cfg(unix)]
+struct RetryScreen {
+    child: Child,
+    batuta_pid_file: tempfile::NamedTempFile,
+    output: Arc<Mutex<Vec<u8>>>,
+    readers: Vec<JoinHandle<()>>,
+}
+
+#[cfg(unix)]
+struct ProbeGate {
+    addr: String,
+    first_request: Receiver<()>,
+    release_first: Mutex<Option<SyncSender<()>>>,
+    stopped: Arc<AtomicBool>,
+    thread: Option<JoinHandle<()>>,
+}
+
+#[cfg(unix)]
+impl ProbeGate {
+    fn start(upstream: SocketAddr) -> Self {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind startup probe gate");
+        listener
+            .set_nonblocking(true)
+            .expect("set startup probe gate nonblocking");
+        let addr = listener.local_addr().expect("read startup probe gate addr");
+        let (first_request_tx, first_request) = sync_channel(1);
+        let (release_first, release_first_rx) = sync_channel(0);
+        let stopped = Arc::new(AtomicBool::new(false));
+        let thread = std::thread::spawn({
+            let stopped = stopped.clone();
+            move || {
+                let mut first = Some((first_request_tx, release_first_rx));
+                while !stopped.load(Ordering::SeqCst) {
+                    match listener.accept() {
+                        Ok((client, _)) => {
+                            let gate = first.take();
+                            std::thread::spawn(move || {
+                                let _ = forward_probe(client, upstream, gate);
+                            });
+                        }
+                        Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                            std::thread::sleep(Duration::from_millis(10));
+                        }
+                        Err(_) => break,
+                    }
+                }
+            }
+        });
+        Self {
+            addr: addr.to_string(),
+            first_request,
+            release_first: Mutex::new(Some(release_first)),
+            stopped,
+            thread: Some(thread),
+        }
+    }
+
+    fn addr(&self) -> &str {
+        &self.addr
+    }
+
+    fn wait_for_first_request(&self, timeout: Duration) {
+        self.first_request
+            .recv_timeout(timeout)
+            .expect("startup probe did not reach the controlled gate");
+    }
+
+    fn release_first(&self) {
+        if let Some(release) = self.release_first.lock().expect("probe gate lock").take() {
+            let _ = release.send(());
+        }
+    }
+}
+
+#[cfg(unix)]
+impl Drop for ProbeGate {
+    fn drop(&mut self) {
+        self.release_first();
+        self.stopped.store(true, Ordering::SeqCst);
+        let _ = TcpStream::connect(&self.addr);
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
+    }
+}
+
+#[cfg(unix)]
+fn forward_probe(
+    mut client: TcpStream,
+    upstream: SocketAddr,
+    gate: Option<(SyncSender<()>, Receiver<()>)>,
+) -> std::io::Result<()> {
+    client.set_read_timeout(Some(PTY_CLEANUP_TIMEOUT))?;
+    let mut request = Vec::with_capacity(4096);
+    loop {
+        let mut buffer = [0_u8; 4096];
+        let read = client.read(&mut buffer)?;
+        if read == 0 {
+            return Ok(());
+        }
+        request.extend_from_slice(&buffer[..read]);
+        if request.windows(4).any(|bytes| bytes == b"\r\n\r\n") {
+            break;
+        }
+    }
+    if let Some((reached, release)) = gate {
+        let _ = reached.send(());
+        let _ = release.recv();
+    }
+    let mut upstream = TcpStream::connect(upstream)?;
+    upstream.write_all(&request)?;
+    std::io::copy(&mut upstream, &mut client)?;
+    Ok(())
+}
+
+#[cfg(unix)]
+impl RetryScreen {
+    fn start(tcp_addr: &str) -> Self {
+        let binary = assert_cmd::cargo::cargo_bin("batuta");
+        let batuta_pid_file = tempfile::NamedTempFile::new().expect("create batuta PID file");
+        let command = format!(
+            "stty cols {PTY_COLUMNS} rows {PTY_ROWS}; printf '%s' \"$$\" > {}; exec {} --daemon tcp --tcp-addr {tcp_addr}",
+            shell_quote(batuta_pid_file.path()),
+            shell_quote(binary),
+        );
+        let mut process = ProcessCommand::new("script");
+        process
+            .args(["-q", "-e", "-f", "-c", &command, "/dev/null"])
+            .env("TERM", "xterm-256color")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .process_group(0);
+        let mut child = process
+            .spawn()
+            .expect("start retry screen in a pseudo-terminal");
+        let output = Arc::new(Mutex::new(Vec::new()));
+        let readers = [
+            child.stdout.take().map(|stream| {
+                std::thread::spawn({
+                    let output = output.clone();
+                    move || capture(stream, output)
+                })
+            }),
+            child.stderr.take().map(|stream| {
+                std::thread::spawn({
+                    let output = output.clone();
+                    move || capture(stream, output)
+                })
+            }),
+        ]
+        .into_iter()
+        .flatten()
+        .collect();
+        Self {
+            child,
+            batuta_pid_file,
+            output,
+            readers,
+        }
+    }
+
+    fn text(&self) -> String {
+        terminal_text(&self.output.lock().expect("output lock"))
+    }
+
+    fn wait_for_text(&self, expected: &str, timeout: Duration) {
+        let deadline = Instant::now() + timeout;
+        while Instant::now() < deadline {
+            if self.text().contains(expected) {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(25));
+        }
+        panic!("timed out waiting for {expected:?}\\n{}", self.text());
+    }
+
+    fn request_quit(&mut self) {
+        self.child
+            .stdin
+            .as_mut()
+            .expect("retry screen stdin")
+            .write_all(b"q")
+            .and_then(|()| {
+                self.child
+                    .stdin
+                    .as_mut()
+                    .expect("retry screen stdin")
+                    .flush()
+            })
+            .expect("send retry-screen quit key");
+    }
+
+    fn quit(mut self) -> std::process::Output {
+        self.request_quit();
+        self.finish_after_quit_request()
+    }
+
+    fn finish_after_quit_request(mut self) -> std::process::Output {
+        if self.wait_for_exit(PTY_QUIT_GRACE).is_none() {
+            self.child
+                .stdin
+                .as_mut()
+                .expect("batuta stdin")
+                .write_all(b"\x03")
+                .and_then(|()| self.child.stdin.as_mut().expect("batuta stdin").flush())
+                .expect("send state-independent batuta quit key");
+        }
+        self.finish_after(PTY_CLEANUP_TIMEOUT)
+    }
+
+    fn finish_after_quit_request_strict(self) -> std::process::Output {
+        self.finish_after(PTY_QUIT_GRACE)
+    }
+
+    fn force_cleanup(self) -> std::process::Output {
+        self.finish_after(Duration::ZERO)
+    }
+
+    fn batuta_pid(&self) -> u32 {
+        std::fs::read_to_string(self.batuta_pid_file.path())
+            .expect("read batuta PID file")
+            .parse()
+            .expect("parse batuta PID")
+    }
+
+    fn finish_after(mut self, timeout: Duration) -> std::process::Output {
+        let status = self
+            .wait_for_exit(timeout)
+            .unwrap_or_else(|| self.terminate_and_reap());
+        self.child.stdin.take();
+        for reader in self.readers.drain(..) {
+            reader.join().expect("join retry-screen output reader");
+        }
+        std::process::Output {
+            status,
+            stdout: std::mem::take(&mut self.output.lock().expect("output lock")),
+            stderr: Vec::new(),
+        }
+    }
+
+    fn wait_for_exit(&mut self, timeout: Duration) -> Option<std::process::ExitStatus> {
+        let deadline = Instant::now() + timeout;
+        loop {
+            match self.child.try_wait().expect("poll retry-screen process") {
+                Some(status) => return Some(status),
+                None if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(25)),
+                None => return None,
+            }
+        }
+    }
+
+    fn terminate_and_reap(&mut self) -> std::process::ExitStatus {
+        let batuta_pid = self.batuta_pid() as i32;
+        let process_group = self.child.id() as i32;
+        for target in [-process_group, batuta_pid] {
+            let result = unsafe { libc::kill(target, libc::SIGKILL) };
+            if result != 0 {
+                let error = std::io::Error::last_os_error();
+                assert_eq!(
+                    error.raw_os_error(),
+                    Some(libc::ESRCH),
+                    "terminate stuck retry-screen process target {target}: {error}"
+                );
+            }
+        }
+        if let Err(error) = self.child.kill() {
+            assert_eq!(
+                error.kind(),
+                std::io::ErrorKind::InvalidInput,
+                "terminate stuck retry-screen process: {error}"
+            );
+        }
+        self.child.wait().expect("reap stuck retry-screen process")
+    }
+}
+
+#[cfg(unix)]
+impl Drop for RetryScreen {
+    fn drop(&mut self) {
+        if self.child.try_wait().ok().flatten().is_none() {
+            if let Ok(pid) =
+                std::fs::read_to_string(self.batuta_pid_file.path()).and_then(|value| {
+                    value
+                        .parse::<i32>()
+                        .map_err(|error| std::io::Error::other(error.to_string()))
+                })
+            {
+                unsafe {
+                    libc::kill(pid, libc::SIGKILL);
+                }
+            }
+            let process_group = self.child.id() as i32;
+            unsafe {
+                libc::kill(-process_group, libc::SIGKILL);
+            }
+            let _ = self.child.kill();
+            let _ = self.child.wait();
+        }
+        for reader in self.readers.drain(..) {
+            let _ = reader.join();
+        }
+    }
+}
+
+#[cfg(unix)]
+fn quit_retry_screen(child: RetryScreen) -> std::process::Output {
+    child.quit()
+}
+
+#[cfg(unix)]
+fn retry_screen_text(output: &std::process::Output) -> String {
+    terminal_text(&[&output.stdout[..], &output.stderr[..]].concat())
+}
+
+#[cfg(unix)]
+fn process_exists(pid: u32) -> bool {
+    let result = unsafe { libc::kill(pid as i32, 0) };
+    result == 0 || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
+}
+
+#[cfg(unix)]
+fn wait_for_process_exit(pid: u32, timeout: Duration) {
+    let deadline = Instant::now() + timeout;
+    while process_exists(pid) && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(25));
+    }
+    assert!(!process_exists(pid), "process {pid} survived PTY cleanup");
+}
+
+#[cfg(unix)]
+fn terminal_text(bytes: &[u8]) -> String {
+    let mut screen = vec![vec![' '; usize::from(PTY_COLUMNS)]; usize::from(PTY_ROWS)];
+    let (mut row, mut column, mut index) = (0_usize, 0_usize, 0_usize);
+    while index < bytes.len() {
+        match bytes[index] {
+            b'\x1b' if bytes.get(index + 1) == Some(&b'[') => {
+                let start = index + 2;
+                let Some((end, command)) =
+                    bytes[start..]
+                        .iter()
+                        .enumerate()
+                        .find_map(|(offset, byte)| {
+                            (*byte >= b'@' && *byte <= b'~').then_some((start + offset, *byte))
+                        })
+                else {
+                    break;
+                };
+                let parameters = std::str::from_utf8(&bytes[start..end]).unwrap_or_default();
+                match command {
+                    b'H' | b'f' => {
+                        let mut values = parameters
+                            .split(';')
+                            .map(|value| value.parse::<usize>().unwrap_or(1));
+                        row = values
+                            .next()
+                            .unwrap_or(1)
+                            .saturating_sub(1)
+                            .min(screen.len() - 1);
+                        column = values
+                            .next()
+                            .unwrap_or(1)
+                            .saturating_sub(1)
+                            .min(screen[0].len() - 1);
+                    }
+                    b'J' if parameters == "2" => {
+                        screen.iter_mut().for_each(|line| line.fill(' '));
+                        row = 0;
+                        column = 0;
+                    }
+                    _ => {}
+                }
+                index = end + 1;
+            }
+            b'\r' => {
+                column = 0;
+                index += 1;
+            }
+            b'\n' => {
+                row = (row + 1).min(screen.len() - 1);
+                index += 1;
+            }
+            byte if byte.is_ascii_control() => index += 1,
+            _ => {
+                let Some(value) = std::str::from_utf8(&bytes[index..])
+                    .ok()
+                    .and_then(|value| value.chars().next())
+                else {
+                    index += 1;
+                    continue;
+                };
+                if column < screen[0].len() {
+                    screen[row][column] = value;
+                }
+                column = (column + 1).min(screen[0].len());
+                index += value.len_utf8();
+            }
+        }
+    }
+    screen
+        .into_iter()
+        .map(|line| line.into_iter().collect::<String>().trim_end().to_owned())
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+#[cfg(unix)]
+impl LiveTui {
+    fn start(daemon: &Daemon) -> Self {
+        let binary = assert_cmd::cargo::cargo_bin("batuta");
+        let command = format!(
+            "stty cols 120 rows 40; exec {} --config {} --daemon tcp --tcp-addr {} --workspace {}",
+            shell_quote(binary),
+            shell_quote(daemon.home_path().join("missing-batuta-config.toml")),
+            daemon.tcp_addr(),
+            daemon.workspace_id(),
+        );
+        let mut child = ProcessCommand::new("script")
+            .args(["-q", "-e", "-f", "-c", &command, "/dev/null"])
+            .env("TERM", "xterm-256color")
+            .env("COMPOZY_HOME", daemon.home_path())
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("start batuta in a pseudo-terminal");
+        let output = Arc::new(Mutex::new(Vec::new()));
+        let readers = [
+            child.stdout.take().map(|stream| {
+                std::thread::spawn({
+                    let output = output.clone();
+                    move || capture(stream, output)
+                })
+            }),
+            child.stderr.take().map(|stream| {
+                std::thread::spawn({
+                    let output = output.clone();
+                    move || capture(stream, output)
+                })
+            }),
+        ]
+        .into_iter()
+        .flatten()
+        .collect();
+        Self {
+            child,
+            output,
+            readers,
+        }
+    }
+
+    fn send(&mut self, bytes: &[u8]) {
+        self.child
+            .stdin
+            .as_mut()
+            .expect("batuta stdin")
+            .write_all(bytes)
+            .expect("send batuta input");
+    }
+
+    fn text(&self) -> String {
+        String::from_utf8_lossy(&self.output.lock().expect("output lock")).into_owned()
+    }
+
+    fn screen_text(&self) -> String {
+        terminal_text(&self.output.lock().expect("output lock"))
+    }
+
+    fn wait_for_text(&self, expected: &str, timeout: Duration) {
+        let deadline = Instant::now() + timeout;
+        while Instant::now() < deadline {
+            if self.text().contains(expected) {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(25));
+        }
+        panic!("timed out waiting for {expected:?}\n{}", self.text());
+    }
+
+    fn wait_for_screen(&self, timeout: Duration, predicate: impl Fn(&str) -> bool) -> String {
+        let deadline = Instant::now() + timeout;
+        while Instant::now() < deadline {
+            let screen = self.screen_text();
+            if predicate(&screen) {
+                return screen;
+            }
+            std::thread::sleep(Duration::from_millis(25));
+        }
+        panic!(
+            "timed out waiting for terminal state\n{}",
+            self.screen_text()
+        );
+    }
+
+    fn finish(mut self) -> std::process::ExitStatus {
+        self.send(b"q");
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let status = loop {
+            match self.child.try_wait().expect("poll batuta process") {
+                Some(status) => break status,
+                None if Instant::now() < deadline => {
+                    std::thread::sleep(Duration::from_millis(25));
+                }
+                None => {
+                    self.child.kill().expect("kill stuck batuta process");
+                    break self.child.wait().expect("reap stuck batuta process");
+                }
+            }
+        };
+        for reader in self.readers {
+            reader.join().expect("join output reader");
+        }
+        status
+    }
+}
+
+#[cfg(unix)]
+fn capture(mut stream: impl Read, output: Arc<Mutex<Vec<u8>>>) {
+    let mut buffer = [0_u8; 4096];
+    loop {
+        match stream.read(&mut buffer) {
+            Ok(0) | Err(_) => break,
+            Ok(read) => output
+                .lock()
+                .expect("output lock")
+                .extend_from_slice(&buffer[..read]),
+        }
+    }
+}
+
+#[cfg(unix)]
+fn wait_for_request_count(daemon: &Daemon, path: &str, minimum: usize, timeout: Duration) {
+    let deadline = Instant::now() + timeout;
+    while Instant::now() < deadline {
+        let count = daemon
+            .request_log()
+            .entries()
+            .iter()
+            .filter(|(_, request_path)| request_path.starts_with(path))
+            .count();
+        if count >= minimum {
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(25));
+    }
+    panic!("timed out waiting for request {path} count {minimum}");
 }
 
 #[cfg(unix)]
@@ -120,6 +729,103 @@ fn e2e_004_consecutive_doctors_are_independent() {
         .output()
         .unwrap();
     assert_eq!(first.status.success(), second.status.success());
+}
+#[test]
+fn e2e_004_doctor_human_output_reports_a_live_catalog_handshake() {
+    runtime().block_on(async {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/api/status"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "schema_version": "x",
+                "daemon": {"status": "running", "version": "v0.3.0-beta.16"}
+            })))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/api/workspaces"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(serde_json::json!({"workspaces": []})),
+            )
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/api/sessions/catalog-stream"))
+            .respond_with(ResponseTemplate::new(200))
+            .mount(&server)
+            .await;
+
+        let output = command()
+            .args([
+                "doctor",
+                "--daemon",
+                "tcp",
+                "--tcp-addr",
+                &server.address().to_string(),
+            ])
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        let human = String::from_utf8(output.stdout).unwrap();
+        assert!(human.contains("daemon      running"));
+        assert!(human.contains("workspace   none"));
+        assert!(
+            predicate::str::is_match(r"(?m)^streams     catalog: live \(handshake \d+ms\)$")
+                .unwrap()
+                .eval(&human)
+        );
+    });
+}
+#[test]
+fn e2e_005_doctor_json_reports_a_fatal_catalog_during_draining() {
+    runtime().block_on(async {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/api/status"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "schema_version": "x",
+                "daemon": {"status": "draining", "version": "v0.3.0-beta.16"}
+            })))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/api/workspaces"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(serde_json::json!({"workspaces": []})),
+            )
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/api/sessions/catalog-stream"))
+            .respond_with(
+                ResponseTemplate::new(503)
+                    .set_body_json(serde_json::json!({"error": "daemon draining"})),
+            )
+            .mount(&server)
+            .await;
+
+        let output = command()
+            .args([
+                "doctor",
+                "--json",
+                "--daemon",
+                "tcp",
+                "--tcp-addr",
+                &server.address().to_string(),
+            ])
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(json["streams"]["catalog"]["state"], "fatal");
+        assert_eq!(json["streams"]["catalog"]["status"], 503);
+        assert!(
+            json["streams"]["catalog"]["cause"]
+                .as_str()
+                .unwrap()
+                .contains("draining")
+        );
+    });
 }
 #[test]
 fn e2e_005_doctor_json_is_one_line() {
@@ -388,7 +1094,9 @@ fn e2e_101_unreachable_batuta_never_enters_alt_screen() {
         .args(["--tcp-addr", "127.0.0.1:1"])
         .assert()
         .code(1)
-        .stderr(predicate::str::contains("error: daemon unreachable"))
+        .stderr(predicate::str::contains(
+            "batuta needs a terminal; use `batuta sessions --json` for scripting",
+        ))
         .stdout(predicate::str::contains("\u{1b}[?1049h").not());
 }
 
@@ -554,4 +1262,276 @@ fn ut_111_file_logging_is_opt_in() {
         .assert()
         .failure();
     assert!(!disabled.exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn it_001_daemon_starts_late_and_batuta_transitions_without_restart() {
+    if !retry_screen_tests_allowed() {
+        eprintln!(
+            "skipped: retry-screen daemon test requires a detached worktree without .compozy"
+        );
+        return;
+    }
+    let tcp_addr = free_tcp_addr();
+    let port = tcp_addr.parse::<std::net::SocketAddr>().unwrap().port();
+    let child = retry_screen_process(&tcp_addr);
+    child.wait_for_text("batuta — connecting", Duration::from_secs(5));
+    child.wait_for_text("attempt 1", Duration::from_secs(5));
+    let daemon =
+        match runtime().block_on(Daemon::start_with(DaemonOptions::default().http_port(port))) {
+            Ok(StartOutcome::Started(daemon)) => daemon,
+            Ok(StartOutcome::Skip(reason)) => {
+                eprintln!("skipped: {reason}");
+                let _ = quit_retry_screen(child);
+                return;
+            }
+            Err(error) => panic!("start delayed daemon: {error}"),
+        };
+    child.wait_for_text("[1] Sessions", Duration::from_secs(5));
+    let output = quit_retry_screen(child);
+    let text = retry_screen_text(&output);
+    assert!(output.status.success(), "{text}");
+    assert!(text.contains("[1] Sessions"), "{text}");
+    drop(daemon);
+}
+
+#[cfg(unix)]
+#[test]
+fn it_002_missing_socket_retries_with_the_same_specific_error() {
+    if !retry_screen_tests_allowed() {
+        eprintln!(
+            "skipped: retry-screen terminal test requires a detached worktree without .compozy"
+        );
+        return;
+    }
+    let child = retry_screen_process("127.0.0.1:1");
+    child.wait_for_text("last error: connection refused", Duration::from_secs(5));
+    child.wait_for_text("attempt 6", Duration::from_secs(20));
+    let output = quit_retry_screen(child);
+    let text = retry_screen_text(&output);
+    assert!(output.status.success(), "{text}");
+    assert!(text.contains("last error: connection refused"), "{text}");
+    assert!(text.contains("attempt 6"), "{text}");
+}
+
+#[cfg(unix)]
+#[test]
+fn it_023_retry_screen_pty_output_and_cleanup_are_bounded() {
+    if !retry_screen_tests_allowed() {
+        eprintln!(
+            "skipped: retry-screen terminal test requires a detached worktree without .compozy"
+        );
+        return;
+    }
+
+    let child = retry_screen_process("127.0.0.1:1");
+    child.wait_for_text("attempt 1", Duration::from_secs(5));
+    child.wait_for_text("last error: connection refused", Duration::from_secs(5));
+    let output = quit_retry_screen(child);
+    let text = retry_screen_text(&output);
+    assert!(output.status.success(), "{text}");
+    assert!(text.contains("attempt 1"), "{text}");
+    assert!(text.contains("last error: connection refused"), "{text}");
+
+    let child = retry_screen_process("127.0.0.1:1");
+    child.wait_for_text("attempt 1", Duration::from_secs(5));
+    let batuta_pid = child.batuta_pid();
+    let started = Instant::now();
+    let output = child.force_cleanup();
+    wait_for_process_exit(batuta_pid, PTY_CLEANUP_TIMEOUT);
+    assert!(
+        started.elapsed() <= PTY_CLEANUP_TIMEOUT,
+        "forced retry-screen cleanup exceeded {PTY_CLEANUP_TIMEOUT:?}"
+    );
+    assert!(
+        !output.status.success(),
+        "forced cleanup unexpectedly succeeded"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn it_003_daemon_flap_during_startup_stays_in_the_retry_screen() {
+    if !retry_screen_tests_allowed() {
+        eprintln!(
+            "skipped: retry-screen daemon test requires a detached worktree without .compozy"
+        );
+        return;
+    }
+    let daemon = match runtime().block_on(Daemon::start()) {
+        Ok(StartOutcome::Started(daemon)) => daemon,
+        Ok(StartOutcome::Skip(reason)) => {
+            eprintln!("skipped: {reason}");
+            return;
+        }
+        Err(error) => panic!("start flapping daemon: {error}"),
+    };
+    let gate = ProbeGate::start(daemon.tcp_addr());
+    let child = retry_screen_process(gate.addr());
+    gate.wait_for_first_request(Duration::from_secs(5));
+    daemon.stop().expect("stop daemon during transition");
+    gate.release_first();
+    child.wait_for_text("batuta — connecting", Duration::from_secs(5));
+    let output = quit_retry_screen(child);
+    let text = retry_screen_text(&output);
+    assert!(output.status.success(), "{text}");
+    assert!(text.contains("batuta — connecting"), "{text}");
+}
+
+#[cfg(unix)]
+#[test]
+fn it_004_quit_wins_the_connect_race_without_starting_a_session() {
+    if !retry_screen_tests_allowed() {
+        eprintln!(
+            "skipped: retry-screen daemon test requires a detached worktree without .compozy"
+        );
+        return;
+    }
+    let daemon = match runtime().block_on(Daemon::start()) {
+        Ok(StartOutcome::Started(daemon)) => daemon,
+        Ok(StartOutcome::Skip(reason)) => {
+            eprintln!("skipped: {reason}");
+            return;
+        }
+        Err(error) => panic!("start raced daemon: {error}"),
+    };
+    daemon.request_log().clear();
+    let gate = ProbeGate::start(daemon.tcp_addr());
+    let mut child = retry_screen_process(gate.addr());
+    gate.wait_for_first_request(Duration::from_secs(5));
+    let start = Arc::new(Barrier::new(3));
+    let release = gate
+        .release_first
+        .lock()
+        .expect("probe gate lock")
+        .take()
+        .expect("first startup probe already released");
+    std::thread::scope(|scope| {
+        scope.spawn({
+            let start = start.clone();
+            move || {
+                start.wait();
+                let _ = release.send(());
+            }
+        });
+        scope.spawn({
+            let start = start.clone();
+            let child = &mut child;
+            move || {
+                start.wait();
+                child.request_quit();
+            }
+        });
+        start.wait();
+    });
+    let output = child.finish_after_quit_request_strict();
+    let text = retry_screen_text(&output);
+    assert!(output.status.success(), "{text}");
+    assert!(
+        !String::from_utf8_lossy(&output.stdout).contains("[1] Sessions"),
+        "quit/connect race rendered the live session view: {text}"
+    );
+    let requests = daemon.request_log().entries();
+    assert!(
+        !requests.is_empty(),
+        "the released startup probe was not observed"
+    );
+    assert!(
+        requests.iter().all(|(method, _)| method == "GET"),
+        "quit/connect race dispatched a daemon mutation: {requests:?}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn e2e_003_draining_journey_runs_the_live_batuta_process() {
+    let Some(daemon) = daemon_or_skip() else {
+        return;
+    };
+    runtime()
+        .block_on(daemon.create_session("batuta"))
+        .expect("create session for draining journey");
+    daemon.request_log().clear();
+    daemon.set_daemon_draining(true);
+
+    let mut tui = LiveTui::start(&daemon);
+    tui.wait_for_text("daemon draining", Duration::from_secs(10));
+    wait_for_request_count(&daemon, "/api/sessions?", 1, Duration::from_secs(5));
+    wait_for_request_count(
+        &daemon,
+        &format!("/api/workspaces/{}/loop-runs", daemon.workspace_id()),
+        1,
+        Duration::from_secs(5),
+    );
+    let reads_screen = tui.wait_for_screen(Duration::from_secs(5), |screen| {
+        screen.lines().any(|line| line.contains("batuta  —"))
+            && screen.contains("[2] Deliver runs · batuta-deliver")
+            && screen.contains("no runs for batuta-deliver — press * for all")
+    });
+    assert!(
+        reads_screen.lines().any(|line| line.contains("batuta  —")),
+        "created session was not rendered while draining: {reads_screen:?}"
+    );
+    assert!(
+        reads_screen.contains("no runs for batuta-deliver — press * for all"),
+        "runs did not render their normal empty state while draining: {reads_screen:?}"
+    );
+
+    tui.send(b"L");
+    wait_for_request_count(&daemon, "/api/logs?", 1, Duration::from_secs(5));
+    tui.wait_for_text("logs ·", Duration::from_secs(5));
+    tui.send(b"L");
+    std::thread::sleep(Duration::from_millis(100));
+    tui.send(b"n");
+    tui.wait_for_text(
+        "can't start session — daemon draining, try again once it recovers",
+        Duration::from_secs(5),
+    );
+    assert!(
+        daemon
+            .request_log()
+            .entries()
+            .iter()
+            .all(|(method, _)| method != "POST"),
+        "draining write guard must refuse before network dispatch"
+    );
+
+    let prior_status_polls = daemon
+        .request_log()
+        .entries()
+        .iter()
+        .filter(|(_, path)| path == "/api/status")
+        .count();
+    daemon.set_daemon_draining(false);
+    wait_for_request_count(
+        &daemon,
+        "/api/status",
+        prior_status_polls + 1,
+        Duration::from_secs(35),
+    );
+    let recovery_screen = tui.wait_for_screen(Duration::from_secs(5), |screen| {
+        screen.contains("[1] Sessions")
+            && screen.contains("daemon running")
+            && !screen.contains("daemon draining — finishing in-flight work, writes refused")
+    });
+    assert!(
+        !recovery_screen.contains("daemon draining — finishing in-flight work, writes refused"),
+        "recovery retained the draining banner: {recovery_screen:?}"
+    );
+
+    let status = tui.finish();
+    assert!(status.success(), "batuta exited with {status}");
+}
+
+#[cfg(unix)]
+#[test]
+fn e2e_111_daemon_down_then_up_matches_the_retry_screen_golden_path() {
+    it_001_daemon_starts_late_and_batuta_transitions_without_restart();
+}
+
+#[cfg(unix)]
+#[test]
+fn e2e_112_quitting_the_retry_screen_exits_zero_without_daemon_side_effects() {
+    it_004_quit_wins_the_connect_race_without_starting_a_session();
 }

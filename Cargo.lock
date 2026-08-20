@@ -185,6 +185,8 @@ dependencies = [
  "compozy-client",
  "compozy-testkit",
  "crossterm",
+ "futures-util",
+ "libc",
  "predicates",
  "ratatui",
  "semver",
@@ -207,6 +209,7 @@ version = "0.1.0-beta.1"
 dependencies = [
  "async-stream",
  "compozy-client",
+ "compozy-testkit",
  "crossterm",
  "futures-util",
  "insta",

@@ -378,6 +378,28 @@ pub struct DaemonStatus {
     pub poll_ok: bool,
 }
 
+/// Single derivation point for the daemon's UI-facing state (ADR-002).
+/// Every consumer reads this instead of comparing `DaemonStatus.status`
+/// or the offline predicate independently.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DaemonState {
+    Connected,
+    Draining,
+    Offline,
+}
+
+impl DaemonState {
+    pub fn derive(status: &DaemonStatus, offline: bool) -> Self {
+        if status.status == "draining" {
+            DaemonState::Draining
+        } else if offline {
+            DaemonState::Offline
+        } else {
+            DaemonState::Connected
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub enum PendingKind {
     Request(Request),
@@ -403,7 +425,6 @@ pub struct Model {
     pub sessions_unfiltered: Vec<SessionRow>,
     pub sessions_all_agents: bool,
     pub sessions_has_more: bool,
-    pub catalog_polling: bool,
     pub catalog_debounce_armed: bool,
     pub create_session_pending: bool,
     pub prompt_pending: bool,
@@ -459,7 +480,6 @@ impl Model {
             sessions_unfiltered: Vec::new(),
             sessions_all_agents: false,
             sessions_has_more: false,
-            catalog_polling: false,
             catalog_debounce_armed: false,
             create_session_pending: false,
             prompt_pending: false,
@@ -643,6 +663,32 @@ impl Model {
         let mut ids = self.active_streams.iter().cloned().collect::<Vec<_>>();
         ids.sort_by_key(ToString::to_string);
         ids.into_iter().map(Cmd::StopStream).collect()
+    }
+    pub fn is_offline(&self) -> bool {
+        !self.daemon.poll_ok
+            && !self.active_streams.is_empty()
+            && self.active_streams.iter().all(|id| {
+                matches!(
+                    self.stream_status.get(id),
+                    Some(StreamStatus::Stale | StreamStatus::Fatal(_))
+                )
+            })
+    }
+    pub fn daemon_state(&self) -> DaemonState {
+        DaemonState::derive(&self.daemon, self.is_offline())
+    }
+    /// Refuses a write action while the daemon is draining, surfacing the
+    /// `_dx.md` Errors-table message. Returns `true` when the caller must
+    /// abort the write.
+    pub fn refuse_write(&mut self, verb: &str) -> bool {
+        if self.daemon_state() == DaemonState::Draining {
+            self.set_sticky_toast(format!(
+                "can't {verb} — daemon draining, try again once it recovers"
+            ));
+            true
+        } else {
+            false
+        }
     }
 }
 

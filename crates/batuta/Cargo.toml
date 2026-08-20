@@ -4,12 +4,14 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
+repository.workspace = true
 
 [dependencies]
 clap.workspace = true
 batuta-tui = { path = "../batuta-tui" }
 compozy-client = { path = "../compozy-client" }
 crossterm.workspace = true
+futures-util.workspace = true
 ratatui.workspace = true
 semver.workspace = true
 serde.workspace = true
@@ -25,6 +27,7 @@ unicode-width.workspace = true
 [dev-dependencies]
 assert_cmd = "2"
 compozy-testkit = { path = "../compozy-testkit" }
+libc.workspace = true
 predicates = "3"
 tempfile.workspace = true
 wiremock.workspace = true

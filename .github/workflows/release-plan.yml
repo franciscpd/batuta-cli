@@ -1,0 +1,143 @@
+name: Release plan
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    types: [closed]
+
+concurrency:
+  group: release-plan-${{ github.event_name }}
+  cancel-in-progress: false
+
+jobs:
+  release-plan:
+    if: >-
+      github.event_name == 'push' &&
+      !contains(github.event.head_commit.message, 'release: v')
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Generate bumped changelog
+        id: git-cliff
+        uses: orhun/git-cliff-action@v4
+        with:
+          config: cliff.toml
+          args: --bump
+        env:
+          OUTPUT: CHANGELOG.md
+      - name: Bump workspace version
+        id: version
+        shell: bash
+        env:
+          BUMPED_TAG: ${{ steps.git-cliff.outputs.version }}
+        run: |
+          set -euo pipefail
+          tag="$BUMPED_TAG"
+          version="${tag#v}"
+          if [ -z "$version" ] || [ "$tag" = "$version" ]; then
+            echo "git-cliff did not produce a v-prefixed version" >&2
+            exit 1
+          fi
+
+          sed -i -E "0,/^version = \"[^\"]+\"/s//version = \"${version}\"/" Cargo.toml
+          # Refresh only the lockfile's inherited workspace versions while also
+          # proving the bumped workspace still builds. Avoid a broad dependency update.
+          cargo check --workspace
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+      - name: Build release PR description
+        env:
+          RELEASE_TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          set -euo pipefail
+          notes="$RUNNER_TEMP/release-notes.md"
+          awk -v heading="## [${RELEASE_TAG}]" '
+            $0 == heading || index($0, heading " - ") == 1 { emit = 1 }
+            emit && /^## \[/ && $0 != heading && index($0, heading " - ") != 1 { exit }
+            emit { print }
+          ' CHANGELOG.md > "$notes"
+          test -s "$notes"
+
+          body="$RUNNER_TEMP/release-pr-body.md"
+          {
+            echo "## Release ${RELEASE_TAG}"
+            echo
+            echo "Merging this PR is the only action that creates ${RELEASE_TAG} and starts the cargo-dist release workflow."
+            echo
+            echo "Before merging, confirm the repository secret \`RELEASE_TOKEN\` is configured as documented in \`docs/releasing.md\`."
+            echo
+            echo "### Generated changelog"
+            echo
+            cat "$notes"
+          } > "$body"
+          echo "body=$body" >> "$GITHUB_ENV"
+      - name: Open or update the standing release PR
+        uses: peter-evans/create-pull-request@v8
+        with:
+          token: ${{ secrets.RELEASE_TOKEN }}
+          branch: release-plan
+          base: main
+          delete-branch: true
+          commit-message: "release: ${{ steps.version.outputs.tag }}"
+          title: "release: ${{ steps.version.outputs.tag }}"
+          body-path: ${{ env.body }}
+          add-paths: |
+            Cargo.toml
+            Cargo.lock
+            CHANGELOG.md
+
+  tag-merged-release:
+    if: >-
+      github.event_name == 'pull_request' &&
+      github.event.action == 'closed' &&
+      github.event.pull_request.merged == true &&
+      github.event.pull_request.base.ref == 'main' &&
+      github.event.pull_request.head.ref == 'release-plan' &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.merge_commit_sha }}
+          fetch-depth: 0
+          token: ${{ secrets.RELEASE_TOKEN }}
+      - name: Validate release metadata
+        id: release
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -euo pipefail
+          version="$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -n 1)"
+          tag="v${version}"
+          if [ "$PR_TITLE" != "release: ${tag}" ]; then
+            echo "release PR title must be exactly: release: ${tag}" >&2
+            exit 1
+          fi
+          grep -Fq "## [${tag}]" CHANGELOG.md
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+      - name: Create PAT-authenticated version tag
+        env:
+          MERGE_SHA: ${{ github.event.pull_request.merge_commit_sha }}
+          RELEASE_TAG: ${{ steps.release.outputs.tag }}
+        run: |
+          set -euo pipefail
+          if git rev-parse --verify --quiet "refs/tags/${RELEASE_TAG}^{commit}" >/dev/null; then
+            existing="$(git rev-parse "refs/tags/${RELEASE_TAG}^{commit}")"
+            test "$existing" = "$MERGE_SHA"
+            exit 0
+          fi
+
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git tag -a "$RELEASE_TAG" "$MERGE_SHA" -m "batuta-cli ${RELEASE_TAG}"
+          # actions/checkout configured origin with RELEASE_TOKEN. This PAT push,
+          # unlike GITHUB_TOKEN, emits the tag event that triggers release.yml.
+          git push origin "$RELEASE_TAG"

@@ -1,15 +1,45 @@
 use crate::{cli::Cli, config::Settings, exit::AppError, probe, version, workspace};
 use compozy_client::{
-    Outcome, ProbeReport, TargetOutcome, Transport,
+    Error, Outcome, ProbeReport, TargetOutcome, Transport,
     types::{StatusPayload, Workspace},
 };
 use serde::Serialize;
+use std::time::{Duration, Instant};
+
+const CATALOG_STREAM_TIMEOUT: Duration = Duration::from_secs(2);
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum StreamCheck {
+    Live { handshake_ms: u64 },
+    Fatal { status: u16, cause: String },
+    Timeout,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum DaemonState {
+    Connected,
+    Draining,
+    Offline,
+}
+
+impl DaemonState {
+    fn derive(status: &StatusPayload, offline: bool) -> Self {
+        if status.daemon.status == "draining" {
+            Self::Draining
+        } else if offline {
+            Self::Offline
+        } else {
+            Self::Connected
+        }
+    }
+}
 
 #[derive(Clone, Debug)]
 pub struct Report {
     pub probe: ProbeReport,
     pub status: Option<StatusPayload>,
     pub workspace: Option<Workspace>,
+    pub streams: Option<StreamCheck>,
     pub warnings: Vec<String>,
     pub config: Option<ConfigReport>,
 }
@@ -36,6 +66,7 @@ pub async fn run(cli: &Cli, settings: &Settings) -> Result<(), AppError> {
             probe,
             status: None,
             workspace: None,
+            streams: None,
             warnings: vec!["daemon unreachable".into()],
             config: Some(config_report(settings)),
         };
@@ -65,6 +96,7 @@ pub async fn run(cli: &Cli, settings: &Settings) -> Result<(), AppError> {
         probe,
         status: Some(status),
         workspace,
+        streams: Some(probe_catalog_stream(&client).await),
         warnings,
         config: Some(config_report(settings)),
     };
@@ -111,8 +143,11 @@ pub fn render_human(report: &Report) -> String {
             output.push_str(&format!("workspace   none — no workspace contains {cwd}; pass --workspace or set COMPOZY_WORKSPACE\n"));
         }
     }
-    if status.daemon.status == "draining" {
+    if DaemonState::derive(status, false) == DaemonState::Draining {
         output.push_str("note: writes are refused while draining; reads work\n");
+    }
+    if let Some(stream) = &report.streams {
+        output.push_str(&format!("streams     {}\n", render_stream_human(stream)));
     }
     if let Some(config) = &report.config {
         let state = if config.loaded {
@@ -124,6 +159,34 @@ pub fn render_human(report: &Report) -> String {
     }
     output.push_str("ok\n");
     output
+}
+
+async fn probe_catalog_stream(client: &compozy_client::Client) -> StreamCheck {
+    let started = Instant::now();
+    match tokio::time::timeout(CATALOG_STREAM_TIMEOUT, client.catalog_stream_handshake()).await {
+        Ok(Ok(())) => StreamCheck::Live {
+            handshake_ms: started.elapsed().as_millis() as u64,
+        },
+        Ok(Err(Error::Daemon {
+            status, message, ..
+        })) => StreamCheck::Fatal {
+            status,
+            cause: message,
+        },
+        Ok(Err(error)) => StreamCheck::Fatal {
+            status: 0,
+            cause: error.to_string(),
+        },
+        Err(_) => StreamCheck::Timeout,
+    }
+}
+
+fn render_stream_human(stream: &StreamCheck) -> String {
+    match stream {
+        StreamCheck::Live { handshake_ms } => format!("catalog: live (handshake {handshake_ms}ms)"),
+        StreamCheck::Fatal { status, cause } => format!("catalog: fatal ({status} — {cause})"),
+        StreamCheck::Timeout => "catalog: timeout (after 2s)".into(),
+    }
 }
 
 pub fn render_human_error(report: &Report) -> String {
@@ -181,6 +244,8 @@ struct JsonReport<'a> {
     targets: Vec<JsonTarget>,
     daemon: Option<JsonDaemon<'a>>,
     workspace: Option<JsonWorkspace<'a>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    streams: Option<JsonStreams>,
     warnings: &'a [String],
     #[serde(skip_serializing_if = "Option::is_none")]
     config: Option<JsonConfig<'a>>,
@@ -216,6 +281,17 @@ struct JsonConfig<'a> {
     path: &'a str,
     loaded: bool,
 }
+#[derive(Serialize)]
+struct JsonStreams {
+    catalog: JsonStreamCheck,
+}
+#[derive(Serialize)]
+#[serde(tag = "state", rename_all = "snake_case")]
+enum JsonStreamCheck {
+    Live { handshake_ms: u64 },
+    Fatal { status: u16, cause: String },
+    Timeout,
+}
 
 pub fn render_json(report: &Report) -> String {
     let targets = report
@@ -241,6 +317,9 @@ pub fn render_json(report: &Report) -> String {
         targets,
         daemon,
         workspace,
+        streams: report.streams.as_ref().map(|stream| JsonStreams {
+            catalog: json_stream_check(stream),
+        }),
         warnings: &report.warnings,
         config: report.config.as_ref().map(|config| JsonConfig {
             path: &config.path,
@@ -253,6 +332,19 @@ pub fn render_json(report: &Report) -> String {
     })
     .expect("doctor JSON serializes")
         + "\n"
+}
+
+fn json_stream_check(stream: &StreamCheck) -> JsonStreamCheck {
+    match stream {
+        StreamCheck::Live { handshake_ms } => JsonStreamCheck::Live {
+            handshake_ms: *handshake_ms,
+        },
+        StreamCheck::Fatal { status, cause } => JsonStreamCheck::Fatal {
+            status: *status,
+            cause: cause.clone(),
+        },
+        StreamCheck::Timeout => JsonStreamCheck::Timeout,
+    }
 }
 
 fn config_report(settings: &Settings) -> ConfigReport {
@@ -279,7 +371,11 @@ fn json_target(target: &TargetOutcome) -> JsonTarget {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::PathBuf;
+    use std::{path::PathBuf, time::Duration};
+    use wiremock::{
+        Mock, MockServer, ResponseTemplate,
+        matchers::{method, path},
+    };
     fn report(outcome: Outcome) -> Report {
         Report {
             probe: ProbeReport {
@@ -308,6 +404,7 @@ mod tests {
                 root_dir: "/tmp".into(),
                 ..Default::default()
             }),
+            streams: Some(StreamCheck::Live { handshake_ms: 42 }),
             warnings: vec![],
             config: None,
         }
@@ -358,5 +455,88 @@ mod tests {
         let json: serde_json::Value = serde_json::from_str(&render_json(&value)).unwrap();
         assert_eq!(json["config"]["path"], "/tmp/batuta/config.toml");
         assert_eq!(json["config"]["loaded"], true);
+    }
+
+    #[test]
+    fn ut_014_human_streams_line_matches_contract() {
+        assert!(
+            render_human(&report(Outcome::Ok))
+                .contains("streams     catalog: live (handshake 42ms)\n")
+        );
+    }
+
+    #[test]
+    fn ut_015_json_streams_shape_matches_contract() {
+        let json: serde_json::Value =
+            serde_json::from_str(&render_json(&report(Outcome::Ok))).unwrap();
+        assert_eq!(
+            json["streams"]["catalog"],
+            serde_json::json!({
+                "state": "live",
+                "handshake_ms": 42,
+            })
+        );
+    }
+
+    #[tokio::test]
+    async fn ut_011_catalog_probe_returns_live_after_a_healthy_handshake() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/api/sessions/catalog-stream"))
+            .respond_with(ResponseTemplate::new(200))
+            .mount(&server)
+            .await;
+
+        let result =
+            probe_catalog_stream(&compozy_client::Client::tcp(server.address().to_string())).await;
+        assert!(matches!(result, StreamCheck::Live { handshake_ms } if handshake_ms < 2_000));
+    }
+
+    #[tokio::test]
+    async fn ut_012_catalog_probe_reports_a_draining_503_as_fatal() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/api/sessions/catalog-stream"))
+            .respond_with(
+                ResponseTemplate::new(503)
+                    .set_body_json(serde_json::json!({"error": "daemon draining"})),
+            )
+            .mount(&server)
+            .await;
+
+        assert_eq!(
+            probe_catalog_stream(&compozy_client::Client::tcp(server.address().to_string())).await,
+            StreamCheck::Fatal {
+                status: 503,
+                cause: "daemon draining".into(),
+            }
+        );
+    }
+
+    #[tokio::test]
+    async fn ut_013_catalog_probe_times_out_at_the_two_second_boundary() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/api/sessions/catalog-stream"))
+            .respond_with(ResponseTemplate::new(200).set_delay(Duration::from_secs(3)))
+            .mount(&server)
+            .await;
+
+        let started = Instant::now();
+        let result =
+            probe_catalog_stream(&compozy_client::Client::tcp(server.address().to_string())).await;
+        assert_eq!(result, StreamCheck::Timeout);
+        assert!(started.elapsed() >= CATALOG_STREAM_TIMEOUT);
+        assert!(started.elapsed() < Duration::from_secs(3));
+    }
+
+    #[test]
+    fn ut_016_standalone_doctor_report_keeps_existing_checks_and_adds_streams() {
+        let rendered = render_human(&report(Outcome::Ok));
+        assert!(rendered.contains("transport   uds  /tmp/daemon.sock\n"));
+        assert!(rendered.contains("daemon      running"));
+        assert!(rendered.contains("workspace   test  ws_1  /tmp\n"));
+        assert!(rendered.contains("streams     catalog: live (handshake 42ms)\n"));
+        assert!(rendered.ends_with("ok\n"));
     }
 }

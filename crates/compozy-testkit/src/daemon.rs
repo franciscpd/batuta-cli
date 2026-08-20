@@ -1,6 +1,6 @@
 use crate::{
     Error, Result, config_seed, env,
-    proxy::{Proxy, RequestLog},
+    proxy::{Faults, Proxy, RequestLog},
     readiness,
 };
 use bytes::Bytes;
@@ -76,6 +76,7 @@ pub struct Daemon {
     process: Option<Child>,
     proxy: Proxy,
     requests: RequestLog,
+    faults: Faults,
     start_attempts: usize,
 }
 
@@ -122,7 +123,8 @@ impl Daemon {
 
         let daemon_addr = SocketAddr::from(([127, 0, 0, 1], port));
         let requests = RequestLog::default();
-        let proxy = Proxy::start(daemon_addr, requests.clone()).await?;
+        let faults = Faults::default();
+        let proxy = Proxy::start(daemon_addr, requests.clone(), faults.clone()).await?;
         let workspaces = Client::uds(socket.clone())
             .workspaces()
             .await
@@ -142,6 +144,7 @@ impl Daemon {
             process: Some(process),
             proxy,
             requests,
+            faults,
             start_attempts: attempts,
         })))
     }
@@ -160,6 +163,22 @@ impl Daemon {
 
     pub fn request_log(&self) -> RequestLog {
         self.requests.clone()
+    }
+
+    pub fn set_catalog_draining(&self, draining: bool) {
+        self.faults.set_catalog_draining(draining);
+    }
+
+    pub fn set_daemon_draining(&self, draining: bool) {
+        self.faults.set_daemon_draining(draining);
+    }
+
+    pub fn set_prompt_delay(&self, delay: Duration) {
+        self.faults.set_prompt_delay(delay);
+    }
+
+    pub fn active_catalog_connections(&self) -> usize {
+        self.faults.active_catalog_connections()
     }
 
     pub fn home_path(&self) -> &Path {

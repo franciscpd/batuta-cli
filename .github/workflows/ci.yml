@@ -6,7 +6,9 @@ on:
   workflow_dispatch:
 
 env:
-  COMPOZY_TEST_DAEMON_BIN: ${{ vars.COMPOZY_TEST_DAEMON_BIN }}
+  # Keep this daemon pin aligned with contract/README.md's API-shape pin.
+  COMPOZY_DAEMON_VERSION: v0.3.0-beta.16
+  COMPOZY_DAEMON_SHA256: f0bee98c16ea7e04584c21e0cc76564f20b490c0f33824e862cf1e3fb3815742
 
 jobs:
   fmt:
@@ -46,6 +48,8 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: ${{ matrix.rust }}
+      - name: Install boundary-check tools
+        run: sudo apt-get update && sudo apt-get install -y ripgrep jq
       - run: cargo test --workspace
 
   boundaries:
@@ -59,10 +63,35 @@ jobs:
       - run: scripts/check-boundaries.sh
 
   contract:
-    needs: [fmt, test]
-    if: github.event_name == 'workflow_dispatch' || env.COMPOZY_TEST_DAEMON_BIN != ''
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      # Actions checkout is a fresh disposable worktree, so it must remain free
+      # of .compozy/ for compozy-testkit contract tests. Keep this guard if
+      # checkout caching is introduced later.
+      - name: Verify clean contract-test checkout
+        run: |
+          if [ -d .compozy ]; then
+            echo "ERROR: contract tests must run without a .compozy/ directory" >&2
+            exit 1
+          fi
+      - name: Install pinned CompozyOS daemon
+        id: install-compozy
+        run: |
+          set -euo pipefail
+          archive="${RUNNER_TEMP}/compozy_linux_x86_64.tar.gz"
+          install_dir="${RUNNER_TEMP}/compozy-${COMPOZY_DAEMON_VERSION}"
+          curl --fail --location --silent --show-error \
+            --output "${archive}" \
+            "https://github.com/compozy/compozy/releases/download/${COMPOZY_DAEMON_VERSION}/compozy_linux_x86_64.tar.gz"
+          echo "${COMPOZY_DAEMON_SHA256}  ${archive}" \
+            | sha256sum --check
+          mkdir -p "${install_dir}"
+          tar -xzf "${archive}" -C "${install_dir}"
+          test -x "${install_dir}/compozy"
+          echo "bin=${install_dir}/compozy" >> "$GITHUB_OUTPUT"
       - uses: dtolnay/rust-toolchain@stable
-      - run: cargo test -p compozy-client --test contract
+      - name: Run contract tests against pinned daemon
+        env:
+          COMPOZY_TEST_DAEMON_BIN: ${{ steps.install-compozy.outputs.bin }}
+        run: cargo test -p compozy-client --test contract

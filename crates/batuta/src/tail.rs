@@ -21,6 +21,7 @@ pub async fn run(
             probe: report,
             status: None,
             workspace: None,
+            streams: None,
             warnings: vec!["daemon unreachable".into()],
             config: None,
         };

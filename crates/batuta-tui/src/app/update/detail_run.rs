@@ -82,15 +82,19 @@ fn open_selected(model: &mut Model) -> Vec<Cmd> {
 }
 
 fn control(model: &mut Model, status: Option<&str>, control: RunControl) -> Vec<Cmd> {
-    let Some(detail) = run_detail(model) else {
+    let Some(run_id) = run_detail(model).map(|detail| detail.run_id.clone()) else {
         return Vec::new();
     };
     if status.is_some_and(detail_run::terminal) {
         model.set_sticky_toast(format!("run is already {}", status.unwrap_or_default()));
         return Vec::new();
     }
+    let verb = control_verb(control);
+    if model.refuse_write(verb) {
+        return Vec::new();
+    }
     if control == RunControl::Kill {
-        let prompt = format!("kill run {}? Enter/Esc", detail.run_id);
+        let prompt = format!("kill run {run_id}? Enter/Esc");
         run_detail_mut(model).unwrap().confirm = Some(Confirm { prompt });
         model.dirty = true;
         return Vec::new();
@@ -99,6 +103,10 @@ fn control(model: &mut Model, status: Option<&str>, control: RunControl) -> Vec<
 }
 
 fn post_control(model: &mut Model, control: RunControl) -> Vec<Cmd> {
+    let verb = control_verb(control);
+    if model.refuse_write(verb) {
+        return Vec::new();
+    }
     let Some(workspace) = model.workspace.as_ref().map(|value| value.id.clone()) else {
         return Vec::new();
     };
@@ -111,6 +119,15 @@ fn post_control(model: &mut Model, control: RunControl) -> Vec<Cmd> {
         run,
         control,
     }))]
+}
+
+fn control_verb(control: RunControl) -> &'static str {
+    match control {
+        RunControl::Pause => "pause run",
+        RunControl::Resume => "resume run",
+        RunControl::Cancel => "cancel run",
+        RunControl::Kill => "kill run",
+    }
 }
 
 pub(super) fn confirm(model: &mut Model, key: KeyCode) -> Vec<Cmd> {
@@ -139,6 +156,13 @@ fn approve(model: &mut Model, decision: GateDecision) -> Vec<Cmd> {
         return Vec::new();
     };
     let gate_id = gate_id.to_owned();
+    let verb = match decision {
+        GateDecision::Approve => "approve",
+        GateDecision::Reject => "reject",
+    };
+    if model.refuse_write(verb) {
+        return Vec::new();
+    }
     let Some(workspace) = model.workspace.as_ref().map(|value| value.id.clone()) else {
         return Vec::new();
     };

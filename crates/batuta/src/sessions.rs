@@ -16,6 +16,7 @@ pub async fn run(cli: &Cli, all_agents: bool, limit: i64) -> Result<(), AppError
                 probe: report,
                 status: None,
                 workspace: None,
+                streams: None,
                 warnings: vec!["daemon unreachable".into()],
                 config: None,
             };

@@ -165,7 +165,7 @@ fn ut_211_views_reject_forbidden_imports_in_test_modules() {
 }
 
 #[test]
-fn it_007_script_rejects_a_forbidden_client_dependency_and_ci_orders_formatting_first() {
+fn it_007_script_rejects_a_forbidden_dependency_and_ci_provisions_test_tools() {
     let root = workspace_root();
     let temporary = temporary_directory("script");
     fs::create_dir_all(temporary.join("crates/compozy-client/src")).expect("create fixture source");
@@ -203,4 +203,71 @@ fn it_007_script_rejects_a_forbidden_client_dependency_and_ci_orders_formatting_
     assert!(workflow.contains("boundaries:"));
     assert!(workflow.contains("contract:"));
     assert!(workflow.find("cargo fmt --check") < workflow.find("cargo build --workspace"));
+
+    let test_job = workflow
+        .split("  test:\n")
+        .nth(1)
+        .and_then(|jobs| jobs.split("\n  boundaries:").next())
+        .expect("test job");
+    let tools = test_job
+        .find("sudo apt-get update && sudo apt-get install -y ripgrep jq")
+        .expect("test job installs boundary-check tools");
+    let workspace_tests = test_job
+        .find("cargo test --workspace")
+        .expect("workspace tests");
+    assert!(
+        tools < workspace_tests,
+        "tools must be installed before tests"
+    );
+}
+
+#[test]
+fn it_022_script_bootstraps_with_an_empty_cargo_home_and_rejects_forbidden_dependency() {
+    let root = workspace_root();
+    let cargo_home = temporary_directory("empty-cargo-home");
+    let output = Command::new("bash")
+        .arg(root.join("scripts/check-boundaries.sh"))
+        .env("BATUTA_BOUNDARY_ROOT", &root)
+        .env("CARGO_HOME", &cargo_home)
+        .output()
+        .expect("run boundary script with empty Cargo home");
+    assert!(
+        output.status.success(),
+        "clean-cache boundary check failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    fs::remove_dir_all(&cargo_home).expect("remove temporary Cargo home");
+
+    let temporary = temporary_directory("forbidden-dependency");
+    fs::create_dir_all(temporary.join("crates/compozy-client/src")).expect("create fixture source");
+    fs::create_dir_all(temporary.join("crates/batuta-tui/src/views"))
+        .expect("create fixture views");
+    fs::write(
+        temporary.join("Cargo.toml"),
+        "[workspace]\nmembers = [\"crates/compozy-client\"]\nresolver = \"3\"\n",
+    )
+    .expect("write fixture workspace");
+    fs::write(
+        temporary.join("Cargo.lock"),
+        "version = 4\n\n[[package]]\nname = \"compozy-client\"\nversion = \"0.1.0\"\ndependencies = [\n \"ratatui 0.30.0\",\n]\n",
+    )
+    .expect("write fixture lockfile");
+    fs::write(
+        temporary.join("crates/compozy-client/Cargo.toml"),
+        "[package]\nname = \"compozy-client\"\nversion = \"0.1.0\"\nedition = \"2024\"\n[dependencies]\nratatui = \"0.30\"\n",
+    )
+    .expect("write fixture manifest");
+    fs::write(temporary.join("crates/compozy-client/src/lib.rs"), "")
+        .expect("write fixture library");
+
+    let output = Command::new("bash")
+        .arg(root.join("scripts/check-boundaries.sh"))
+        .env("BATUTA_BOUNDARY_ROOT", &temporary)
+        .output()
+        .expect("run boundary script against forbidden dependency");
+    assert!(!output.status.success(), "forbidden dependency must fail");
+    let stderr = String::from_utf8(output.stderr).expect("script stderr");
+    assert!(stderr.contains("client dependency rule"), "{stderr}");
+    assert!(stderr.contains("Cargo.toml"), "{stderr}");
+    fs::remove_dir_all(temporary).expect("remove forbidden-dependency fixture");
 }

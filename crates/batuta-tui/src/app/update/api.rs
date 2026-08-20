@@ -36,6 +36,7 @@ fn failure(model: &mut Model, request: Request, error: String) -> Vec<Cmd> {
     match &request {
         Request::Status { .. } => {
             model.daemon.poll_ok = false;
+            model.daemon.status.clear();
             Vec::new()
         }
         Request::Runs { .. } => {
@@ -95,6 +96,8 @@ fn failure(model: &mut Model, request: Request, error: String) -> Vec<Cmd> {
             model.overlay = None;
             model.set_sticky_toast(if not_found(&error) {
                 "clarification expired or already answered".into()
+            } else if error.to_lowercase().contains("draining") {
+                "daemon is draining — writes refused".into()
             } else if unavailable(&error) {
                 "clarification service unavailable".into()
             } else if conflict(&error) {

@@ -446,10 +446,14 @@ fn ut_533_expired_answer_404() {
 }
 
 #[test]
-fn ut_534_answer_409_and_503_messages() {
+fn ut_534_answer_409_503_and_draining_messages() {
     for (error, expected) in [
         ("409 daemon says no", "409 daemon says no"),
         ("503 unavailable", "clarification service unavailable"),
+        (
+            "503 daemon is draining",
+            "daemon is draining — writes refused",
+        ),
     ] {
         let mut model = choose_model(vec!["a"]);
         let request = permission_post(&mut model, KeyCode::Enter);

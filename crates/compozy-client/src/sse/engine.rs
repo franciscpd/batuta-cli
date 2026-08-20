@@ -1,4 +1,4 @@
-use super::Cursor;
+use super::{Cursor, NoCursor};
 use crate::{
     Client, Error, HttpClient,
     request::{RouteKind, response_error},
@@ -201,6 +201,14 @@ impl EventStream {
                 reconnecting = true;
             }
         }
+    }
+}
+
+pub(crate) async fn handshake(client: &Client, request: &StreamRequest) -> Result<(), Error> {
+    match connect(client, request, &NoCursor, client.request_timeout).await {
+        Ok(_) => Ok(()),
+        Err(ConnectFailure::Fatal(error)) => Err(error),
+        Err(ConnectFailure::Retry(error)) => Err(Error::Transport(error)),
     }
 }
 
