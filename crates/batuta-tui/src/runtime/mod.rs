@@ -166,6 +166,10 @@ impl RuntimeClient for Client {
                     .create_session(&workspace, &agent)
                     .await
                     .map(ApiResponse::SessionCreated),
+                Request::AddWorkspace { name, root_dir, .. } => client
+                    .add_workspace(&compozy_client::types::AddWorkspaceRequest { name, root_dir })
+                    .await
+                    .map(ApiResponse::WorkspaceAdded),
                 Request::Prompt {
                     workspace,
                     session,

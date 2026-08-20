@@ -52,6 +52,32 @@ pub fn render(model: &Model, frame: &mut Frame<'_>) {
     }
     let (title, text, scroll) = match overlay {
         Overlay::Help { scroll } => ("help".to_owned(), keymap::help_lines().join("\n"), *scroll),
+        Overlay::WorkspaceOnboarding {
+            candidate,
+            confirming,
+            adding,
+            booting,
+            message,
+        } => {
+            let action = if *booting {
+                "starting workspace…"
+            } else if *adding {
+                "adding this directory…"
+            } else if *confirming {
+                "Enter confirms registration; Esc cancels"
+            } else {
+                "a add this directory  r refresh  c choose existing workspace  q exit"
+            };
+            let message = message.as_deref().unwrap_or("");
+            (
+                "workspace setup".into(),
+                format!(
+                    "{}\n{}\n\n{}\n{}",
+                    candidate.name, candidate.root_dir, action, message
+                ),
+                0,
+            )
+        }
         Overlay::Logs { .. } | Overlay::WorkspacePicker { .. } => unreachable!(),
         Overlay::Clarify { .. } => {
             let (title, text) = super::clarify::content(overlay).expect("clarification overlay");

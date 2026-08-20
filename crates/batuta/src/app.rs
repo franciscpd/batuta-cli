@@ -16,14 +16,14 @@ pub async fn run(cli: &Cli, settings: &Settings) -> Result<(), AppError> {
         .map_err(|error| AppError::daemon(format!("initialize terminal: {error}")))?;
     let (client, status) = await_daemon(cli, &mut terminal).await?;
     let warning = version::check(status.daemon.version.as_deref());
-    let workspace = match workspace::resolve_from_daemon_with_source(
+    let resolution = workspace::resolve_from_daemon_with_source(
         &client,
         settings.workspace.as_deref(),
         settings.workspace_source,
     )
-    .await?
-    {
-        workspace::WorkspaceResolution::Selected(workspace) => Some(workspace),
+    .await?;
+    let workspace = match &resolution {
+        workspace::WorkspaceResolution::Selected(workspace) => Some(workspace.clone()),
         workspace::WorkspaceResolution::Unresolved(_) => None,
     };
     let workspace_ref = workspace.as_ref().map(|workspace| WorkspaceRef {
@@ -32,6 +32,12 @@ pub async fn run(cli: &Cli, settings: &Settings) -> Result<(), AppError> {
         root_dir: workspace.root_dir.clone(),
     });
     let mut model = Model::new(settings.tui_settings(workspace_ref), AppMode::Full);
+    if let workspace::WorkspaceResolution::Unresolved(candidate) = resolution {
+        model.start_workspace_onboarding(batuta_tui::app::WorkspaceCandidate {
+            name: candidate.name,
+            root_dir: candidate.canonical_path.display().to_string(),
+        });
+    }
     model.daemon.status = status.daemon.status;
     model.daemon.version = status.daemon.version;
     if let Some(warning) = warning {

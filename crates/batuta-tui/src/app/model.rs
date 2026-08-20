@@ -111,6 +111,12 @@ pub struct WorkspaceRef {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WorkspaceCandidate {
+    pub name: String,
+    pub root_dir: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Settings {
     pub preset: Preset,
     pub ui: UiSettings,
@@ -368,6 +374,13 @@ pub enum Overlay {
         items: Vec<WorkspaceRef>,
         at_start: bool,
     },
+    WorkspaceOnboarding {
+        candidate: WorkspaceCandidate,
+        confirming: bool,
+        adding: bool,
+        booting: bool,
+        message: Option<String>,
+    },
     Clarify {
         session_id: String,
         request_id: String,
@@ -433,6 +446,8 @@ pub struct Model {
     pub mode: AppMode,
     pub settings: Settings,
     pub workspace: Option<WorkspaceRef>,
+    pub startup_candidate: Option<WorkspaceCandidate>,
+    pub startup_boot_pending: BTreeSet<RequestId>,
     pub focus: Panel,
     pub sessions: ListState<SessionRow>,
     pub runs: ListState<RunRow>,
@@ -485,6 +500,8 @@ impl Model {
             mode,
             settings,
             workspace,
+            startup_candidate: None,
+            startup_boot_pending: BTreeSet::new(),
             focus: if mode == AppMode::TailOnly {
                 Panel::Detail
             } else {
@@ -566,6 +583,17 @@ impl Model {
         model.detail = Detail::Session(Box::new(detail));
         model
     }
+    pub fn start_workspace_onboarding(&mut self, candidate: WorkspaceCandidate) {
+        self.startup_candidate = Some(candidate.clone());
+        self.overlay = Some(Overlay::WorkspaceOnboarding {
+            candidate,
+            confirming: false,
+            adding: false,
+            booting: false,
+            message: None,
+        });
+        self.dirty = true;
+    }
     pub fn allocate(&mut self, make: impl FnOnce(RequestId) -> Request) -> Request {
         let id = RequestId(self.next_request);
         self.next_request += 1;
@@ -573,6 +601,33 @@ impl Model {
         self.pending
             .insert(id, PendingKind::Request(request.clone()));
         request
+    }
+    pub fn complete_workspace_boot(&mut self, id: RequestId) {
+        if self.startup_boot_pending.remove(&id) && self.startup_boot_pending.is_empty() {
+            self.startup_candidate = None;
+            self.overlay = None;
+            self.dirty = true;
+        }
+    }
+    pub fn fail_workspace_boot(&mut self, id: RequestId, error: String) -> Option<Vec<Cmd>> {
+        if !self.startup_boot_pending.remove(&id) {
+            return None;
+        }
+        for id in std::mem::take(&mut self.startup_boot_pending) {
+            self.pending.remove(&id);
+        }
+        let candidate = self.startup_candidate.clone()?;
+        self.overlay = Some(Overlay::WorkspaceOnboarding {
+            candidate,
+            confirming: false,
+            adding: false,
+            booting: false,
+            message: Some(format!("workspace selected; startup failed: {error}")),
+        });
+        let commands = self.all_stop_cmds();
+        self.active_streams.clear();
+        self.dirty = true;
+        Some(commands)
     }
     pub fn message_ids(&mut self) -> (String, String) {
         let value = self.next_message;
@@ -593,6 +648,9 @@ impl Model {
                     Cmd::Render,
                 ];
             }
+            return vec![Cmd::Render];
+        }
+        if self.startup_candidate.is_some() {
             return vec![Cmd::Render];
         }
         let Some(workspace) = self.workspace.clone() else {

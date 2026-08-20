@@ -54,6 +54,11 @@ pub enum Request {
     Workspaces {
         id: RequestId,
     },
+    AddWorkspace {
+        id: RequestId,
+        name: String,
+        root_dir: String,
+    },
     Sessions {
         id: RequestId,
         workspace: String,
@@ -159,6 +164,7 @@ impl Request {
         match self {
             Self::Status { id }
             | Self::Workspaces { id }
+            | Self::AddWorkspace { id, .. }
             | Self::Sessions { id, .. }
             | Self::Session { id, .. }
             | Self::TranscriptPage { id, .. }
@@ -182,7 +188,8 @@ impl Request {
     pub const fn is_write(&self) -> bool {
         matches!(
             self,
-            Self::CreateSession { .. }
+            Self::AddWorkspace { .. }
+                | Self::CreateSession { .. }
                 | Self::Prompt { .. }
                 | Self::CancelPrompt { .. }
                 | Self::Approve { .. }

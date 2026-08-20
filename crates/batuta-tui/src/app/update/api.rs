@@ -33,7 +33,20 @@ pub(super) fn api(model: &mut Model, id: RequestId, result: ApiResult) -> Vec<Cm
 
 fn failure(model: &mut Model, request: Request, error: String) -> Vec<Cmd> {
     model.dirty = true;
+    if let Some(commands) = model.fail_workspace_boot(request.id(), error.clone()) {
+        return commands;
+    }
     match &request {
+        Request::AddWorkspace { .. } => {
+            if let Some(crate::app::model::Overlay::WorkspaceOnboarding {
+                adding, message, ..
+            }) = &mut model.overlay
+            {
+                *adding = false;
+                *message = Some(format!("registration failed — {error}"));
+            }
+            Vec::new()
+        }
         Request::Status { .. } => {
             model.daemon.poll_ok = false;
             model.daemon.status.clear();
@@ -146,6 +159,7 @@ fn not_found(error: &str) -> bool {
 }
 
 fn apply(model: &mut Model, request: Request, response: ApiResponse) -> Vec<Cmd> {
+    let request_id = request.id();
     match (request, response) {
         (Request::Status { .. }, ApiResponse::Status(status)) => {
             model.daemon.status = status.daemon.status;
@@ -154,24 +168,78 @@ fn apply(model: &mut Model, request: Request, response: ApiResponse) -> Vec<Cmd>
             Vec::new()
         }
         (Request::Workspaces { .. }, ApiResponse::Workspaces(items)) => {
+            if let Some(candidate) = model.startup_candidate.clone()
+                && matches!(
+                    model.overlay,
+                    Some(crate::app::model::Overlay::WorkspaceOnboarding { .. })
+                )
+            {
+                if let Some(item) = items
+                    .into_iter()
+                    .find(|item| item.root_dir == candidate.root_dir)
+                {
+                    return super::picker::switch(
+                        model,
+                        crate::app::model::WorkspaceRef {
+                            id: item.id,
+                            name: item.name,
+                            root_dir: item.root_dir,
+                        },
+                    );
+                }
+                if let Some(crate::app::model::Overlay::WorkspaceOnboarding {
+                    adding,
+                    message,
+                    ..
+                }) = &mut model.overlay
+                {
+                    *adding = false;
+                    *message = Some(
+                        "this directory is not registered; add it, refresh, or choose a workspace"
+                            .into(),
+                    );
+                }
+                return Vec::new();
+            }
             super::picker::apply(model, items);
             Vec::new()
         }
+        (Request::AddWorkspace { .. }, ApiResponse::WorkspaceAdded(outcome)) => match outcome {
+            compozy_client::types::AddWorkspaceOutcome::Added(_) => {
+                let request = model.allocate(|id| Request::Workspaces { id });
+                vec![Cmd::Get(request)]
+            }
+            compozy_client::types::AddWorkspaceOutcome::Unsupported => {
+                if let Some(crate::app::model::Overlay::WorkspaceOnboarding {
+                    adding,
+                    message,
+                    ..
+                }) = &mut model.overlay
+                {
+                    *adding = false;
+                    *message = Some("This daemon cannot add workspaces through its API. Run: compozy workspace add <path>".into());
+                }
+                Vec::new()
+            }
+        },
         (Request::Sessions { .. }, ApiResponse::Sessions(page)) => {
             sessions::apply(model, *page);
             attention::rebuild(model);
             model.dirty = true;
             let mut commands = attention::refresh(model);
             commands.extend(super::detail_session::reopen_if_active(model));
+            model.complete_workspace_boot(request_id);
             commands
         }
         (Request::Runs { .. }, ApiResponse::Runs(page)) => {
             runs::apply(model, *page);
             model.dirty = true;
-            runs::any_live(model)
+            let commands = runs::any_live(model)
                 .then(|| Cmd::After(Duration::from_secs(5), TimerId::RunsPoll))
                 .into_iter()
-                .collect()
+                .collect();
+            model.complete_workspace_boot(request_id);
+            commands
         }
         (Request::Overview { .. }, ApiResponse::Overview(overview)) => {
             model.attention_overview_total = overview.attention.total;
@@ -179,6 +247,7 @@ fn apply(model: &mut Model, request: Request, response: ApiResponse) -> Vec<Cmd>
             model.attention_overview_unavailable = false;
             attention::rebuild(model);
             model.dirty = true;
+            model.complete_workspace_boot(request_id);
             Vec::new()
         }
         (Request::Clarifications { session, .. }, ApiResponse::Clarifications(items)) => {

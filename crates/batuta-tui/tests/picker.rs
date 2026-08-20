@@ -8,10 +8,10 @@ use batuta_tui::{
 };
 use compozy_client::{
     RunControl,
-    types::{LoopMutation, Workspace},
+    types::{AddWorkspaceOutcome, LoopMutation, Workspace},
 };
 use crossterm::event::KeyCode;
-use panels_support::{key, model, render, respond};
+use panels_support::{fail, key, model, render, respond, runs_page, session_page};
 
 fn workspaces() -> Vec<Workspace> {
     vec![
@@ -203,4 +203,181 @@ fn ut_625_late_post_result_is_ignored_except_success_toast_once() {
         },
     );
     assert!(model.toast.is_none());
+}
+
+#[test]
+fn ut_729_confirmed_onboarding_is_the_only_registration_write_and_boots_after_refetch() {
+    let mut model = batuta_tui::Model::new(
+        Settings {
+            workspace: None,
+            ..Settings::default()
+        },
+        AppMode::Full,
+    );
+    model.start_workspace_onboarding(batuta_tui::app::WorkspaceCandidate {
+        name: "new-workspace".into(),
+        root_dir: "/tmp/new-workspace".into(),
+    });
+
+    assert!(update(&mut model, key(KeyCode::Char('a'))).is_empty());
+    assert!(update(&mut model, key(KeyCode::Esc)).is_empty());
+    assert!(model.pending.is_empty());
+
+    update(&mut model, key(KeyCode::Char('a')));
+    let add = update(&mut model, key(KeyCode::Enter))
+        .into_iter()
+        .find_map(|cmd| match cmd {
+            Cmd::Post(request @ Request::AddWorkspace { .. }) => Some(request),
+            _ => None,
+        })
+        .expect("confirmation writes once");
+    let refetch = update(
+        &mut model,
+        Msg::Api {
+            request: add.id(),
+            result: Ok(ApiResponse::WorkspaceAdded(AddWorkspaceOutcome::Added(
+                Workspace::default(),
+            ))),
+        },
+    )
+    .into_iter()
+    .find_map(|cmd| match cmd {
+        Cmd::Get(request @ Request::Workspaces { .. }) => Some(request),
+        _ => None,
+    })
+    .expect("successful registration refetches catalog");
+    let boot_commands = respond(
+        &mut model,
+        refetch,
+        ApiResponse::Workspaces(vec![Workspace {
+            id: "ws-new".into(),
+            name: "new-workspace".into(),
+            root_dir: "/tmp/new-workspace".into(),
+            ..Workspace::default()
+        }]),
+    );
+    let sessions = boot_commands
+        .iter()
+        .find_map(|cmd| match cmd {
+            Cmd::Get(request @ Request::Sessions { .. }) => Some(request.clone()),
+            _ => None,
+        })
+        .expect("normal boot requests sessions");
+    let runs = boot_commands
+        .iter()
+        .find_map(|cmd| match cmd {
+            Cmd::Get(request @ Request::Runs { .. }) => Some(request.clone()),
+            _ => None,
+        })
+        .expect("normal boot requests runs");
+    let overview_request = boot_commands
+        .iter()
+        .find_map(|cmd| match cmd {
+            Cmd::Get(request @ Request::Overview { .. }) => Some(request.clone()),
+            _ => None,
+        })
+        .expect("normal boot requests overview");
+    assert_eq!(
+        model
+            .workspace
+            .as_ref()
+            .map(|workspace| workspace.id.as_str()),
+        Some("ws-new")
+    );
+    assert!(matches!(
+        model.overlay,
+        Some(Overlay::WorkspaceOnboarding { booting: true, .. })
+    ));
+    respond(
+        &mut model,
+        sessions,
+        ApiResponse::Sessions(Box::new(session_page())),
+    );
+    assert!(model.overlay.is_some());
+    respond(
+        &mut model,
+        runs,
+        ApiResponse::Runs(Box::new(runs_page(false))),
+    );
+    assert!(model.overlay.is_some());
+    let overview = serde_json::from_value(serde_json::json!({
+        "attention": {"total": 0, "by_kind": {}, "items": []}
+    }))
+    .expect("empty overview");
+    respond(
+        &mut model,
+        overview_request,
+        ApiResponse::Overview(Box::new(overview)),
+    );
+    assert!(model.overlay.is_none());
+}
+
+#[test]
+fn ut_730_onboarding_remains_open_until_normal_boot_succeeds() {
+    let mut model = batuta_tui::Model::new(
+        Settings {
+            workspace: None,
+            ..Settings::default()
+        },
+        AppMode::Full,
+    );
+    model.start_workspace_onboarding(batuta_tui::app::WorkspaceCandidate {
+        name: "new-workspace".into(),
+        root_dir: "/tmp/new-workspace".into(),
+    });
+
+    update(&mut model, key(KeyCode::Char('a')));
+    let add = update(&mut model, key(KeyCode::Enter))
+        .into_iter()
+        .find_map(|cmd| match cmd {
+            Cmd::Post(request @ Request::AddWorkspace { .. }) => Some(request),
+            _ => None,
+        })
+        .expect("confirmation writes once");
+    let refetch = update(
+        &mut model,
+        Msg::Api {
+            request: add.id(),
+            result: Ok(ApiResponse::WorkspaceAdded(AddWorkspaceOutcome::Added(
+                Workspace::default(),
+            ))),
+        },
+    )
+    .into_iter()
+    .find_map(|cmd| match cmd {
+        Cmd::Get(request @ Request::Workspaces { .. }) => Some(request),
+        _ => None,
+    })
+    .expect("successful registration refetches catalog");
+    let commands = respond(
+        &mut model,
+        refetch,
+        ApiResponse::Workspaces(vec![Workspace {
+            id: "ws-new".into(),
+            name: "new-workspace".into(),
+            root_dir: "/tmp/new-workspace".into(),
+            ..Workspace::default()
+        }]),
+    );
+    let sessions = commands
+        .iter()
+        .find_map(|cmd| match cmd {
+            Cmd::Get(request @ Request::Sessions { .. }) => Some(request.clone()),
+            _ => None,
+        })
+        .expect("normal boot requests sessions");
+    assert!(matches!(
+        model.overlay,
+        Some(Overlay::WorkspaceOnboarding { booting: true, .. })
+    ));
+
+    fail(&mut model, sessions, "service unavailable");
+    assert!(matches!(
+        model.overlay,
+        Some(Overlay::WorkspaceOnboarding {
+            booting: false,
+            message: Some(ref message),
+            ..
+        }) if message == "workspace selected; startup failed: service unavailable"
+    ));
 }

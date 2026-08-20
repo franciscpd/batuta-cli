@@ -2,9 +2,9 @@ use crate::cmd::{RequestId, StreamId, TimerId};
 use compozy_client::{
     StreamEvent, TranscriptEvent,
     types::{
-        CatalogEvent, Clarification, ClarifyResult, LogEvent, LoopEvent, LoopMutation,
-        LoopRunDetail, LoopRunPage, Overview, PromptOutcome, Session, SessionPage, StatusPayload,
-        TranscriptPage, Workspace,
+        AddWorkspaceOutcome, CatalogEvent, Clarification, ClarifyResult, LogEvent, LoopEvent,
+        LoopMutation, LoopRunDetail, LoopRunPage, Overview, PromptOutcome, Session, SessionPage,
+        StatusPayload, TranscriptPage, Workspace,
     },
 };
 use crossterm::event::{KeyEvent, MouseEvent};
@@ -13,6 +13,7 @@ use crossterm::event::{KeyEvent, MouseEvent};
 pub enum ApiResponse {
     Status(Box<StatusPayload>),
     Workspaces(Vec<Workspace>),
+    WorkspaceAdded(AddWorkspaceOutcome),
     Sessions(Box<SessionPage>),
     Session(Session),
     TranscriptPage(Box<TranscriptPage>),

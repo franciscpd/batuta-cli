@@ -446,6 +446,9 @@ fn overlay_key(model: &mut Model, key: KeyEvent) -> Vec<Cmd> {
     if matches!(model.overlay, Some(Overlay::WorkspacePicker { .. })) {
         return super::picker::key(model, key);
     }
+    if matches!(model.overlay, Some(Overlay::WorkspaceOnboarding { .. })) {
+        return onboarding_key(model, key);
+    }
     match &mut model.overlay {
         Some(Overlay::Help { scroll }) => match key.code {
             KeyCode::Esc | KeyCode::Char('?') => model.overlay = None,
@@ -453,11 +456,58 @@ fn overlay_key(model: &mut Model, key: KeyEvent) -> Vec<Cmd> {
             KeyCode::Char('k') | KeyCode::Up => *scroll = scroll.saturating_sub(1),
             _ => return Vec::new(),
         },
-        Some(Overlay::Clarify { .. }) => return Vec::new(),
+        Some(Overlay::Clarify { .. } | Overlay::WorkspaceOnboarding { .. }) => return Vec::new(),
         _ => return Vec::new(),
     }
     model.dirty = true;
     Vec::new()
+}
+
+fn onboarding_key(model: &mut Model, key: KeyEvent) -> Vec<Cmd> {
+    let Some(Overlay::WorkspaceOnboarding {
+        candidate,
+        confirming,
+        adding,
+        booting,
+        message,
+    }) = &mut model.overlay
+    else {
+        return Vec::new();
+    };
+    if *adding || *booting {
+        return Vec::new();
+    }
+    match key.code {
+        KeyCode::Char('c') => super::picker::open(model, false),
+        KeyCode::Char('q') => quit(model),
+        KeyCode::Char('r') => {
+            *message = Some("refreshing workspace catalog…".into());
+            let request = model.allocate(|id| Request::Workspaces { id });
+            model.dirty = true;
+            vec![Cmd::Get(request)]
+        }
+        KeyCode::Esc if *confirming => {
+            *confirming = false;
+            model.dirty = true;
+            Vec::new()
+        }
+        KeyCode::Char('a') if !*confirming => {
+            *confirming = true;
+            *message = None;
+            model.dirty = true;
+            Vec::new()
+        }
+        KeyCode::Enter if *confirming => {
+            *adding = true;
+            *message = None;
+            let name = candidate.name.clone();
+            let root_dir = candidate.root_dir.clone();
+            let request = model.allocate(|id| Request::AddWorkspace { id, name, root_dir });
+            model.dirty = true;
+            vec![Cmd::Post(request)]
+        }
+        _ => Vec::new(),
+    }
 }
 
 fn chooser_or_confirm(model: &Model) -> bool {
