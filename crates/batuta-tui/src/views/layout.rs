@@ -85,12 +85,13 @@ pub fn areas(area: Rect, model: &Model) -> Areas {
             .direction(Direction::Horizontal)
             .constraints([Constraint::Percentage(40), Constraint::Percentage(60)])
             .split(rows[1]);
+        let grown = contextual_panel_to_grow(model);
         let left = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
-                Constraint::Percentage(40),
-                Constraint::Percentage(30),
-                Constraint::Percentage(30),
+                contextual_constraint(grown, Panel::Sessions),
+                contextual_constraint(grown, Panel::Runs),
+                contextual_constraint(grown, Panel::Attention),
             ])
             .split(columns[0]);
         Areas {
@@ -103,4 +104,72 @@ pub fn areas(area: Rect, model: &Model) -> Areas {
             footer: rows[2],
         }
     }
+}
+
+const COMPACT_PANEL_HEIGHT: u16 = 3;
+
+fn contextual_constraint(grown: Option<Panel>, panel: Panel) -> Constraint {
+    if grown == Some(panel) {
+        Constraint::Fill(1)
+    } else {
+        Constraint::Length(COMPACT_PANEL_HEIGHT)
+    }
+}
+
+fn contextual_panel_to_grow(model: &Model) -> Option<Panel> {
+    let mut best = None;
+    let mut best_relevance = 0;
+    for panel in [Panel::Sessions, Panel::Runs, Panel::Attention] {
+        let relevance = panel_relevance(model, panel);
+        if relevance > best_relevance {
+            best = Some(panel);
+            best_relevance = relevance;
+        }
+    }
+    best
+}
+
+fn panel_relevance(model: &Model, panel: Panel) -> u8 {
+    if panel == Panel::Attention && !model.attention.is_empty() {
+        4
+    } else if model.focus == panel {
+        3
+    } else if panel == Panel::Runs
+        && model
+            .runs
+            .items
+            .iter()
+            .any(|run| !is_terminal_run(&run.status))
+    {
+        2
+    } else if panel_is_populated(model, panel) {
+        1
+    } else {
+        0
+    }
+}
+
+fn panel_is_populated(model: &Model, panel: Panel) -> bool {
+    match panel {
+        Panel::Sessions => !model.sessions.items.is_empty(),
+        Panel::Runs => !model.runs.items.is_empty(),
+        Panel::Attention => !model.attention.is_empty(),
+        Panel::Detail => false,
+    }
+}
+
+fn is_terminal_run(status: &str) -> bool {
+    matches!(
+        status,
+        "done"
+            | "succeeded"
+            | "completed"
+            | "failed"
+            | "canceled"
+            | "cancelled"
+            | "killed"
+            | "no-op"
+            | "no_op"
+            | "noop"
+    )
 }

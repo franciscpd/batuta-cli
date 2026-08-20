@@ -1,6 +1,6 @@
 ---
 source: crates/batuta-tui/tests/layout.rs
-expression: "render(&model,width,height)"
+expression: "render(&model, width, height)"
 ---
 batuta · ws: workspace ▾ · daemon running · 0 attention
 warning: daemon version dev — compatibility unverified (floor v0.3.0-beta.16)
@@ -18,27 +18,27 @@ warning: daemon version dev — compatibility unverified (floor v0.3.0-beta.16)
 │                                              ││                                                                      │
 │                                              ││                                                                      │
 │                                              ││                                                                      │
+│                                              ││                                                                      │
+│                                              ││                                                                      │
+│                                              ││                                                                      │
+│                                              ││                                                                      │
+│                                              ││                                                                      │
+│                                              ││                                                                      │
+│                                              ││                                                                      │
+│                                              ││                                                                      │
+│                                              ││                                                                      │
+│                                              ││                                                                      │
+│                                              ││                                                                      │
+│                                              ││                                                                      │
+│                                              ││                                                                      │
+│                                              ││                                                                      │
+│                                              ││                                                                      │
+│                                              ││                                                                      │
 └──────────────────────────────────────────────┘│                                                                      │
 ┌[2] Deliver runs · batuta-deliver─────────────┐│                                                                      │
 │no runs for batuta-deliver — press * for all  ││                                                                      │
-│                                              ││                                                                      │
-│                                              ││                                                                      │
-│                                              ││                                                                      │
-│                                              ││                                                                      │
-│                                              ││                                                                      │
-│                                              ││                                                                      │
-│                                              ││                                                                      │
-│                                              ││                                                                      │
 └──────────────────────────────────────────────┘│                                                                      │
 ┌[3] Attention (0)─────────────────────────────┐│                                                                      │
 │nothing needs attention                       ││                                                                      │
-│                                              ││                                                                      │
-│                                              ││                                                                      │
-│                                              ││                                                                      │
-│                                              ││                                                                      │
-│                                              ││                                                                      │
-│                                              ││                                                                      │
-│                                              ││                                                                      │
-│                                              ││                                                                      │
 └──────────────────────────────────────────────┘└──────────────────────────────────────────────────────────────────────┘
 1-4 focus  Tab/Shift+Tab next/previous  w workspace  L logs  ?/F1 help  q/Ctrl+C quit  j/k/↑/↓/PgUp/PgDn/g/G move  Enter
