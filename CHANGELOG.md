@@ -1,13 +1,40 @@
-## [unreleased]
+## [v0.1.0-beta.2] - 2026-08-20
 
 ### 🚀 Features
 
 - *(startup)* Add daemon retry screen
 - *(doctor)* Add catalog stream health
+- *(resilience)* Implement task_01 draining state & catalog stream fix
+
+### 🐛 Bug Fixes
+
+- *(lockfile)* Include batuta libc dependency
+- *(startup)* Retry incompatible daemons
+- *(runs)* Guard final draining dispatch
+- *(boundaries)* Support empty Cargo cache
+- *(ci)* Gate host on release origin
+- *(tui)* Report draining clarification writes
+- *(ci)* Install pinned daemon asset
+- *(ci)* Provision boundary tools in tests
+
+### 🧪 Testing
+
+- *(resilience)* Cover draining recovery
+- *(resilience)* Cross runtime boundaries
+- *(client)* Cover catalog flap recovery
+- *(e2e)* Harden retry PTY harness
+- *(e2e)* Make startup races deterministic
+- *(resilience)* Cover draining empty runs
+- *(e2e)* Prove resilience terminal states
+- *(e2e)* Reap PTY tree and prove reads
+- *(cli)* Derive expected package version
 
 ### ⚙️ Miscellaneous Tasks
 
 - Pin contract test daemon
+- Prepare repository for publishing
+- Add gated release pipeline
+- Run contract job independently
 ## [v0.1.0-beta.1] - 2026-08-18
 
 ### 🚀 Features
