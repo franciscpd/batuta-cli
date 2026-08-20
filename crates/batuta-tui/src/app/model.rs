@@ -257,6 +257,7 @@ pub enum StreamStatus {
 pub struct TranscriptView {
     pub selection: usize,
     pub reasoning_expanded: bool,
+    pub raw_debug: bool,
     pub expanded: BTreeSet<i64>,
     pub follow: bool,
     pub footer: FooterState,
@@ -275,6 +276,7 @@ pub struct RenderCacheKey {
     pub sequence: i64,
     pub width: u16,
     pub reasoning_expanded: bool,
+    pub raw_debug: bool,
     pub expanded: bool,
     pub color: bool,
     pub theme: ThemeVariant,

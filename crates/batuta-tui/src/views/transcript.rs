@@ -53,6 +53,12 @@ pub fn render(model: &Model, frame: &mut Frame<'_>, area: Rect) {
             ));
         }
     }
+    if detail.view.raw_debug {
+        lines.push(Line::styled(
+            "DEBUG · raw transcript presentation",
+            model.theme.warning,
+        ));
+    }
     for (index, entry) in detail
         .transcript
         .entries()
@@ -66,6 +72,7 @@ pub fn render(model: &Model, frame: &mut Frame<'_>, area: Rect) {
             sequence: entry.sequence,
             width: model.size.0.saturating_sub(4),
             reasoning_expanded: detail.view.reasoning_expanded,
+            raw_debug: detail.view.raw_debug,
             expanded: detail.view.expanded.contains(&entry.start_sequence),
             color: model.theme.color,
             theme: model.theme.variant,

@@ -338,6 +338,10 @@ fn detail_key(model: &mut Model, key: KeyEvent) -> Vec<Cmd> {
             detail.view.reasoning_expanded = !detail.view.reasoning_expanded;
             detail.view.cache_dirty = true;
         }
+        KeyCode::Char('D') => {
+            detail.view.raw_debug = !detail.view.raw_debug;
+            detail.view.cache_dirty = true;
+        }
         KeyCode::Char('i') => detail.composer.focused = true,
         KeyCode::Enter => {
             if let Some(entry) = detail

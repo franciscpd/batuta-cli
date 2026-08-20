@@ -10,9 +10,6 @@ use ratatui::{
 };
 use serde_json::Value;
 
-const PART_LIMIT: usize = 1024 * 1024;
-const PAYLOAD_LINE_LIMIT: usize = 200;
-
 pub fn rebuild(model: &mut Model) {
     let width = model.size.0.saturating_sub(4);
     let theme = model.theme.clone();
@@ -26,6 +23,7 @@ pub fn rebuild(model: &mut Model) {
             sequence: entry.sequence,
             width,
             reasoning_expanded: detail.view.reasoning_expanded,
+            raw_debug: detail.view.raw_debug,
             expanded: detail.view.expanded.contains(&entry.start_sequence),
             color: theme.color,
             theme: theme.variant,
@@ -41,6 +39,7 @@ pub fn rebuild(model: &mut Model) {
                     &theme,
                     width,
                     key.reasoning_expanded,
+                    key.raw_debug,
                     key.expanded,
                 ),
             );
@@ -56,6 +55,7 @@ fn render_entry(
     theme: &Theme,
     width: u16,
     reasoning_expanded: bool,
+    raw_debug: bool,
     expanded: bool,
 ) -> Text<'static> {
     let mut lines = Vec::new();
@@ -70,6 +70,17 @@ fn render_entry(
         format!("▸ {role}"),
         theme.emphasis,
     )));
+    if raw_debug {
+        for (index, part) in entry.message.parts.iter().enumerate() {
+            lines.push(indented(format!("part[{index}] raw"), theme.muted));
+            append_payload(&serialize_part(part), theme.muted, &mut lines);
+        }
+        lines.push(Line::default());
+        return Text::from(wrap_lines(
+            lines,
+            usize::from(width.saturating_add(3)).max(1),
+        ));
+    }
     for part in &entry.message.parts {
         render_part(part, theme, reasoning_expanded, expanded, &mut lines);
     }
@@ -87,13 +98,6 @@ fn render_part(
     expanded: bool,
     lines: &mut Vec<Line<'static>>,
 ) {
-    if part_size(part) > PART_LIMIT {
-        lines.push(indented(
-            format!("[part too large: {} bytes]", part_size(part)),
-            theme.warning,
-        ));
-        return;
-    }
     match part {
         Part::Text { text, state } => {
             let mut rendered = markdown_text(text);
@@ -160,7 +164,7 @@ fn render_part(
                 }
                 if let Some(error) = error_text {
                     lines.push(indented("  error".to_owned(), theme.error));
-                    append_truncated(error, theme.error, lines);
+                    append_payload(error, theme.error, lines);
                 }
             }
         }
@@ -290,23 +294,17 @@ fn payload(label: &str, value: &Value, style: Style, lines: &mut Vec<Line<'stati
         Value::String(value) => value.clone(),
         _ => serde_json::to_string_pretty(value).unwrap_or_else(|_| value.to_string()),
     };
-    append_truncated(&text, style, lines);
+    append_payload(&text, style, lines);
 }
 
-fn append_truncated(text: &str, style: Style, lines: &mut Vec<Line<'static>>) {
-    for line in text.lines().take(PAYLOAD_LINE_LIMIT) {
+fn append_payload(text: &str, style: Style, lines: &mut Vec<Line<'static>>) {
+    for line in text.lines() {
         lines.push(indented(format!("    {line}"), style));
     }
-    if text.lines().count() > PAYLOAD_LINE_LIMIT {
-        lines.push(indented("    … truncated".to_owned(), style));
-    }
 }
 
-fn part_size(part: &Part) -> usize {
-    match part {
-        Part::Text { text, .. } | Part::Reasoning { text, .. } => text.len(),
-        _ => serde_json::to_vec(part).map_or(0, |bytes| bytes.len()),
-    }
+fn serialize_part(part: &Part) -> String {
+    serde_json::to_string_pretty(part).unwrap_or_else(|_| format!("{part:?}"))
 }
 
 fn wrap_lines(lines: Vec<Line<'static>>, width: usize) -> Vec<Line<'static>> {
@@ -352,4 +350,111 @@ fn wrap_lines(lines: Vec<Line<'static>>, width: usize) -> Vec<Line<'static>> {
         }
     }
     wrapped
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use compozy_client::types::UiMessage;
+    use serde_json::json;
+
+    fn entry(parts: Vec<Part>) -> Entry {
+        Entry {
+            start_sequence: 1,
+            sequence: 2,
+            message: UiMessage {
+                id: "message-1".into(),
+                role: Role::Assistant,
+                metadata: None,
+                parts,
+            },
+        }
+    }
+
+    #[test]
+    fn expanded_payloads_are_never_discarded_or_line_truncated() {
+        let large = "x".repeat(1024 * 1024 + 1);
+        let output = (0..201)
+            .map(|line| format!("line-{line}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let rendered = render_entry(
+            &entry(vec![
+                Part::Text {
+                    text: large.clone(),
+                    state: None,
+                },
+                Part::Tool {
+                    name: "tool".into(),
+                    tool_call_id: None,
+                    state: None,
+                    input: None,
+                    output: Some(json!(output)),
+                    error_text: None,
+                    title: None,
+                },
+            ]),
+            "agent",
+            &Theme::new(true),
+            u16::MAX,
+            false,
+            false,
+            true,
+        );
+
+        let rendered = rendered
+            .lines
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert_eq!(
+            rendered
+                .chars()
+                .filter(|character| *character == 'x')
+                .count(),
+            large.len()
+        );
+        assert!(rendered.contains("line-200"));
+        assert!(!rendered.contains("… truncated"));
+        assert!(!rendered.contains("part too large"));
+    }
+
+    #[test]
+    fn raw_debug_serializes_every_part_without_truncation() {
+        let part = Part::Tool {
+            name: "tool".into(),
+            tool_call_id: None,
+            state: None,
+            input: Some(json!({"nested": {"unicode": "coração"}})),
+            output: None,
+            error_text: None,
+            title: None,
+        };
+        let expected = serialize_part(&part);
+        let rendered = render_entry(
+            &entry(vec![part]),
+            "agent",
+            &Theme::new(true),
+            u16::MAX,
+            false,
+            true,
+            false,
+        );
+
+        let rendered = rendered
+            .lines
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        let presented_raw = expected
+            .lines()
+            .map(|line| format!("      {line}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(rendered.contains(&presented_raw));
+        assert!(!rendered.contains("… truncated"));
+    }
 }
