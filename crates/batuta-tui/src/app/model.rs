@@ -840,9 +840,48 @@ pub fn page_into_detail(detail: &mut SessionDetail, page: TranscriptPage) {
     let has_older = page.has_older;
     detail.transcript.prepend_page(page);
     if was_empty {
-        detail.view.selection = detail.transcript.len().saturating_sub(1);
+        detail.view.selection = detail
+            .transcript
+            .presentation_rows(detail.view.raw_debug)
+            .len()
+            .saturating_sub(1);
     }
     detail.view.fetching = false;
     detail.view.beginning = !has_older;
     detail.view.cache_dirty = true;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{SessionDetail, page_into_detail};
+    use compozy_client::types::{Session, TranscriptPage};
+
+    #[test]
+    fn initial_page_selection_uses_grouped_presentation_rows() {
+        let mut detail = SessionDetail::new(Session::default());
+        let page: TranscriptPage = serde_json::from_value(serde_json::json!({
+            "entries": (1..=6).map(|sequence| serde_json::json!({
+                "message": {
+                    "id": format!("message-{sequence}"),
+                    "role": "assistant",
+                    "parts": [{
+                        "type": "tool-test",
+                        "state": "completed",
+                        "name": "test"
+                    }]
+                },
+                "start_sequence": sequence,
+                "sequence": sequence
+            })).collect::<Vec<_>>(),
+            "epoch": 1,
+            "generation": 1,
+            "max_sequence": 6
+        }))
+        .unwrap();
+
+        page_into_detail(&mut detail, page);
+
+        assert_eq!(detail.transcript.presentation_rows(false).len(), 1);
+        assert_eq!(detail.view.selection, 0);
+    }
 }
