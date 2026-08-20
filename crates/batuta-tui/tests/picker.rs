@@ -651,3 +651,48 @@ fn it_708_to_it_711_keep_recovery_read_only_after_error_or_indeterminate_add() {
         }) if message == "workspace add returned, but /tmp/new-workspace is not in the refreshed catalog"
     ));
 }
+
+#[test]
+fn it_712_catalog_refetch_failure_after_add_keeps_onboarding_recoverable() {
+    let mut model = onboarding_model();
+    let add = confirm_add(&mut model);
+    let refetch = update(
+        &mut model,
+        Msg::Api {
+            request: add.id(),
+            result: Ok(ApiResponse::WorkspaceAdded(AddWorkspaceOutcome::Added(
+                Workspace::default(),
+            ))),
+        },
+    )
+    .into_iter()
+    .find_map(|command| match command {
+        Cmd::Get(request @ Request::Workspaces { .. }) => Some(request),
+        _ => None,
+    })
+    .expect("successful add refetches the catalog");
+
+    assert!(fail(&mut model, refetch, "service unavailable").is_empty());
+    assert!(matches!(
+        model.overlay,
+        Some(Overlay::WorkspaceOnboarding {
+            adding: false,
+            message: Some(ref message),
+            ..
+        }) if message == "workspace registration succeeded, but catalog refresh failed — retry, choose a workspace, or exit"
+    ));
+
+    let refresh = update(&mut model, key(KeyCode::Char('r')));
+    assert!(
+        refresh
+            .iter()
+            .any(|command| matches!(command, Cmd::Get(Request::Workspaces { .. })))
+    );
+    assert_eq!(update(&mut model, key(KeyCode::Char('q'))), vec![Cmd::Quit]);
+    let choose = update(&mut model, key(KeyCode::Char('c')));
+    assert!(
+        choose
+            .iter()
+            .any(|command| matches!(command, Cmd::Get(Request::Workspaces { .. })))
+    );
+}

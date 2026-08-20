@@ -55,6 +55,21 @@ fn failure(model: &mut Model, request: Request, error: String) -> Vec<Cmd> {
             }
             Vec::new()
         }
+        Request::Workspaces { .. } => {
+            if let Some(crate::app::model::Overlay::WorkspaceOnboarding {
+                adding, message, ..
+            }) = &mut model.overlay
+            {
+                *adding = false;
+                *message = Some(
+                    "workspace registration succeeded, but catalog refresh failed — retry, choose a workspace, or exit"
+                        .into(),
+                );
+                return Vec::new();
+            }
+            model.set_sticky_toast(error);
+            Vec::new()
+        }
         Request::Status { .. } => {
             model.daemon.poll_ok = false;
             model.daemon.status.clear();
