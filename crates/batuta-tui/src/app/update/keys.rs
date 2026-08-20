@@ -340,14 +340,41 @@ fn detail_key(model: &mut Model, key: KeyEvent) -> Vec<Cmd> {
             detail.view.cache_dirty = true;
         }
         KeyCode::Char('D') => {
+            let entries = detail.transcript.entries();
+            let selected_row_start_sequence = rows
+                .get(detail.view.selection)
+                .and_then(|row| entries.get(row.first_entry_index()))
+                .map(|entry| entry.start_sequence);
+            let row_contains_start_sequence =
+                |row: &crate::transcript::PresentationRow, start_sequence| match row {
+                    crate::transcript::PresentationRow::Entry { entry_index } => entries
+                        .get(*entry_index)
+                        .is_some_and(|entry| entry.start_sequence == start_sequence),
+                    crate::transcript::PresentationRow::Group { entry_indexes, .. } => {
+                        entry_indexes.iter().any(|entry_index| {
+                            entries
+                                .get(*entry_index)
+                                .is_some_and(|entry| entry.start_sequence == start_sequence)
+                        })
+                    }
+                };
+            let selected_start_sequence = detail
+                .view
+                .selected_source_start_sequence
+                .filter(|start_sequence| {
+                    rows.get(detail.view.selection)
+                        .is_some_and(|row| row_contains_start_sequence(row, *start_sequence))
+                })
+                .or(selected_row_start_sequence);
+            detail.view.selected_source_start_sequence = selected_start_sequence;
             detail.view.raw_debug = !detail.view.raw_debug;
-            detail.view.selection = detail.view.selection.min(
-                detail
-                    .transcript
-                    .presentation_rows(detail.view.raw_debug)
-                    .len()
-                    .saturating_sub(1),
-            );
+            let rows = detail.transcript.presentation_rows(detail.view.raw_debug);
+            detail.view.selection = selected_start_sequence
+                .and_then(|start_sequence| {
+                    rows.iter()
+                        .position(|row| row_contains_start_sequence(row, start_sequence))
+                })
+                .unwrap_or_else(|| detail.view.selection.min(rows.len().saturating_sub(1)));
             detail.view.cache_dirty = true;
         }
         KeyCode::Char('i') => detail.composer.focused = true,

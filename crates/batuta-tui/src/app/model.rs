@@ -262,6 +262,7 @@ pub enum StreamStatus {
 #[derive(Clone, Debug, Default)]
 pub struct TranscriptView {
     pub selection: usize,
+    pub selected_source_start_sequence: Option<i64>,
     pub reasoning_expanded: bool,
     pub raw_debug: bool,
     pub expanded: BTreeSet<i64>,
@@ -328,6 +329,7 @@ impl SessionDetail {
             session,
             transcript: TranscriptState::default(),
             view: TranscriptView {
+                selected_source_start_sequence: None,
                 follow: true,
                 fetching: true,
                 stopped,
