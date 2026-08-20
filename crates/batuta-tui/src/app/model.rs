@@ -1,7 +1,7 @@
 use crate::{
     app::composer::ComposerState,
     cmd::{Cmd, LogScope, Request, RequestId, StreamId, TimerId},
-    theme::Theme,
+    theme::{Theme, ThemeVariant},
     transcript::TranscriptState,
 };
 use compozy_client::types::{
@@ -47,6 +47,24 @@ pub enum ColorMode {
     Never,
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ThemeMode {
+    #[default]
+    Auto,
+    Dark,
+    Light,
+}
+
+impl From<ThemeMode> for ThemeVariant {
+    fn from(value: ThemeMode) -> Self {
+        match value {
+            ThemeMode::Auto => Self::Auto,
+            ThemeMode::Dark => Self::Dark,
+            ThemeMode::Light => Self::Light,
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Preset {
     pub agent: String,
@@ -68,6 +86,7 @@ impl Default for Preset {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct UiSettings {
     pub color: ColorMode,
+    pub theme: ThemeMode,
     pub fps: u16,
     pub sessions_limit: u64,
     pub runs_limit: u64,
@@ -76,6 +95,7 @@ impl Default for UiSettings {
     fn default() -> Self {
         Self {
             color: ColorMode::Auto,
+            theme: ThemeMode::Auto,
             fps: 30,
             sessions_limit: 50,
             runs_limit: 50,
@@ -257,6 +277,7 @@ pub struct RenderCacheKey {
     pub reasoning_expanded: bool,
     pub expanded: bool,
     pub color: bool,
+    pub theme: ThemeVariant,
 }
 
 #[derive(Clone, Debug)]
@@ -457,6 +478,7 @@ impl Model {
     pub fn new(settings: Settings, mode: AppMode) -> Self {
         let workspace = settings.workspace.clone();
         let color = settings.ui.color != ColorMode::Never;
+        let theme_mode = settings.ui.theme;
         Self {
             mode,
             settings,
@@ -507,7 +529,11 @@ impl Model {
             active_streams: HashSet::new(),
             stream_status: HashMap::new(),
             stream_cursors: HashMap::new(),
-            theme: Theme::new(color),
+            theme: Theme::with_variant(
+                color,
+                theme_mode.into(),
+                std::env::var("COLORFGBG").ok().as_deref(),
+            ),
             quit_guard: false,
             last_list_focus: Panel::Sessions,
             next_request: 1,

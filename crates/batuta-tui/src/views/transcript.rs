@@ -68,6 +68,7 @@ pub fn render(model: &Model, frame: &mut Frame<'_>, area: Rect) {
             reasoning_expanded: detail.view.reasoning_expanded,
             expanded: detail.view.expanded.contains(&entry.start_sequence),
             color: model.theme.color,
+            theme: model.theme.variant,
         };
         if let Some(text) = detail.view.render_cache.get(&key) {
             for mut line in text.lines.clone() {

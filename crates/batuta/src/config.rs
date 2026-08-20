@@ -1,5 +1,5 @@
 use crate::cli::{Cli, DaemonArg};
-use batuta_tui::app::{ColorMode, Preset, Settings as TuiSettings, UiSettings};
+use batuta_tui::app::{ColorMode, Preset, Settings as TuiSettings, ThemeMode, UiSettings};
 use serde::Deserialize;
 use std::{
     env,
@@ -36,6 +36,7 @@ pub struct DaemonFile {
 #[derive(Clone, Debug, Default, Deserialize)]
 pub struct UiFile {
     pub color: Option<String>,
+    pub theme: Option<String>,
     pub fps: Option<u16>,
     pub sessions_limit: Option<u64>,
     pub runs_limit: Option<u64>,
@@ -187,6 +188,18 @@ pub fn resolve(cli: &Cli, env: &Env, file: Option<ConfigFile>) -> Result<Setting
             message: "ui.color must be auto or never".into(),
         });
     }
+    if file
+        .ui
+        .theme
+        .as_deref()
+        .is_some_and(|value| parse_theme(Some(value)).is_none())
+    {
+        return Err(ConfigError {
+            path: path(cli),
+            line: 1,
+            message: "ui.theme must be auto, dark, or light".into(),
+        });
+    }
     let preset = Preset {
         agent: file.preset.agent.unwrap_or_else(|| "batuta".into()),
         loop_name: file
@@ -211,6 +224,7 @@ pub fn resolve(cli: &Cli, env: &Env, file: Option<ConfigFile>) -> Result<Setting
     } else {
         parse_color(file.ui.color.as_deref()).unwrap_or(ColorMode::Auto)
     };
+    let theme = parse_theme(file.ui.theme.as_deref()).unwrap_or(ThemeMode::Auto);
     let fps = clamp(file.ui.fps.unwrap_or(30), 5, 60, "fps", &mut warnings);
     let sessions_limit = clamp(
         file.ui.sessions_limit.unwrap_or(50),
@@ -234,6 +248,7 @@ pub fn resolve(cli: &Cli, env: &Env, file: Option<ConfigFile>) -> Result<Setting
         },
         ui: UiSettings {
             color,
+            theme,
             fps,
             sessions_limit,
             runs_limit,
@@ -258,6 +273,15 @@ fn parse_color(value: Option<&str>) -> Option<ColorMode> {
     match value {
         Some("auto") => Some(ColorMode::Auto),
         Some("never") => Some(ColorMode::Never),
+        _ => None,
+    }
+}
+
+fn parse_theme(value: Option<&str>) -> Option<ThemeMode> {
+    match value {
+        Some("auto") => Some(ThemeMode::Auto),
+        Some("dark") => Some(ThemeMode::Dark),
+        Some("light") => Some(ThemeMode::Light),
         _ => None,
     }
 }
@@ -297,7 +321,7 @@ fn unknown_key_warnings(value: &toml::Value) -> Vec<String> {
         ("daemon", ["transport", "tcp_addr"].as_slice()),
         (
             "ui",
-            ["color", "fps", "sessions_limit", "runs_limit"].as_slice(),
+            ["color", "theme", "fps", "sessions_limit", "runs_limit"].as_slice(),
         ),
     ];
     let mut warnings = Vec::new();
@@ -389,6 +413,49 @@ mod tests {
         assert_eq!(settings.daemon.transport, DaemonArg::Tcp);
         assert_eq!(settings.workspace.as_deref(), Some("flag"));
         assert_eq!(settings.ui.color, ColorMode::Never);
+    }
+
+    #[test]
+    fn ut_703_theme_accepts_documented_values_and_reports_invalid_value() {
+        let value = cli();
+        for (input, expected) in [
+            ("auto", ThemeMode::Auto),
+            ("dark", ThemeMode::Dark),
+            ("light", ThemeMode::Light),
+        ] {
+            let settings = resolve(
+                &value,
+                &Env::default(),
+                Some(ConfigFile {
+                    ui: UiFile {
+                        theme: Some(input.into()),
+                        ..UiFile::default()
+                    },
+                    ..ConfigFile::default()
+                }),
+            )
+            .unwrap();
+            assert_eq!(settings.ui.theme, expected);
+        }
+        let error = resolve(
+            &value,
+            &Env::default(),
+            Some(ConfigFile {
+                ui: UiFile {
+                    theme: Some("solarized".into()),
+                    ..UiFile::default()
+                },
+                ..ConfigFile::default()
+            }),
+        )
+        .unwrap_err();
+        assert_eq!(error.line, 1);
+        assert_eq!(error.message, "ui.theme must be auto, dark, or light");
+        assert!(
+            error
+                .to_string()
+                .contains(&error.path.display().to_string())
+        );
     }
 
     #[test]

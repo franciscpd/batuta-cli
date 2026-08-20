@@ -1,6 +1,5 @@
 ---
 source: crates/batuta-tui/tests/detail_session.rs
-assertion_line: 38
 expression: "render(&model, 100, 30)"
 ---
 "batuta · ws: workspace ▾ · daemon running · 0 attention                                             "
@@ -22,11 +21,11 @@ expression: "render(&model, 100, 30)"
 "│                                      ││  [redacted]                                              │"
 "│                                      ││  event: usage                                            │"
 "│                                      ││  ▸ reasoning (1 lines)                                   │"
-"│                                      ││  ✓ redacted                                              │"
+"│                                      ││  ✓ completed redacted                                    │"
 "└──────────────────────────────────────┘│  event: tool_call                                        │"
-"┌[3] Attention (0)─────────────────────┐│  ✓ redacted                                              │"
+"┌[3] Attention (0)─────────────────────┐│  ✓ completed redacted                                    │"
 "│nothing needs attention               ││  event: tool_call                                        │"
-"│                                      ││  ✓ redacted                                              │"
+"│                                      ││  ✓ completed redacted                                    │"
 "│                                      ││live                                                      │"
 "│                                      ││                                                          │"
 "│                                      ││                                                          │"

@@ -1,10 +1,11 @@
 use batuta_tui::{
     app::{Model, SessionHeader, page_into_detail},
     msg::Msg,
+    theme::{Theme, ThemeVariant},
     update, views,
 };
 use compozy_client::types::{Entry, Part, Role, TranscriptPage, UiMessage};
-use ratatui::{Terminal, backend::TestBackend};
+use ratatui::{Terminal, backend::TestBackend, style::Color};
 use serde_json::json;
 
 fn entry(start: i64, role: Role, parts: Vec<Part>) -> Entry {
@@ -150,4 +151,29 @@ fn ut_680_delivery_one_tail_layout() {
     assert!(output.contains("batuta · batuta-cli"));
     assert!(output.contains("file_mutation_unverified"));
     assert!(output.contains("j/k move"));
+}
+
+#[test]
+fn e2e_700_semantic_terminal_journey() {
+    let mut dark_model = model();
+    dark_model.theme = Theme::with_variant(true, ThemeVariant::Dark, None);
+    let dark_text = render(dark_model, 120, 40);
+    let mut light_model = model();
+    light_model.theme = Theme::with_variant(true, ThemeVariant::Light, None);
+    assert_eq!(render(light_model, 120, 40), dark_text);
+    assert!(dark_text.contains("✓ completed"));
+    assert!(dark_text.contains("× failed"));
+    assert!(dark_text.contains("▶ tool"));
+
+    let mut no_color_model = model();
+    no_color_model.theme = Theme::with_variant(false, ThemeVariant::Light, None);
+    update(&mut no_color_model, Msg::Resize(120, 40));
+    let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+    terminal
+        .draw(|frame| views::view(&no_color_model, frame))
+        .unwrap();
+    let buffer = terminal.backend().buffer();
+    assert!(buffer.content.iter().all(|cell| cell.fg == Color::Reset));
+    assert!(buffer.content.iter().all(|cell| cell.bg == Color::Reset));
+    assert_eq!(render(no_color_model, 120, 40), dark_text);
 }

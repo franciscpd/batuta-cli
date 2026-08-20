@@ -28,6 +28,7 @@ pub fn rebuild(model: &mut Model) {
             reasoning_expanded: detail.view.reasoning_expanded,
             expanded: detail.view.expanded.contains(&entry.start_sequence),
             color: theme.color,
+            theme: theme.variant,
         };
         if let Some(cached) = detail.view.render_cache.get(&key) {
             new_cache.insert(key, cached.clone());
@@ -135,11 +136,13 @@ fn render_part(
             error_text,
             ..
         } => {
-            let (glyph, style) = tool_status(state.as_deref(), theme);
+            let (activity, style) = tool_status(state.as_deref(), theme);
             let summary = input.as_ref().and_then(first_scalar).unwrap_or_default();
             lines.push(indented(
                 format!(
-                    "{glyph} {name}{}",
+                    "{} {} {name}{}",
+                    activity.marker(),
+                    activity.label(),
                     if summary.is_empty() {
                         String::new()
                     } else {
