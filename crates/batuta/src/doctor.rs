@@ -82,15 +82,15 @@ pub async fn run(cli: &Cli, settings: &Settings) -> Result<(), AppError> {
         .into_iter()
         .collect::<Vec<_>>();
     warnings.extend(settings.warnings.clone());
-    let explicit = settings.workspace.as_deref();
-    let workspace = match workspace::resolve_from_daemon(&client, explicit).await {
-        Ok(workspace) => Some(workspace),
-        Err(error)
-            if explicit.is_none() && error.to_string().starts_with("no workspace contains") =>
-        {
-            None
-        }
-        Err(error) => return Err(error),
+    let workspace = match workspace::resolve_from_daemon_with_source(
+        &client,
+        settings.workspace.as_deref(),
+        settings.workspace_source,
+    )
+    .await?
+    {
+        workspace::WorkspaceResolution::Selected(workspace) => Some(workspace),
+        workspace::WorkspaceResolution::Unresolved(_) => None,
     };
     let report = Report {
         probe,

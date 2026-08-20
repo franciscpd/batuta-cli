@@ -16,17 +16,16 @@ pub async fn run(cli: &Cli, settings: &Settings) -> Result<(), AppError> {
         .map_err(|error| AppError::daemon(format!("initialize terminal: {error}")))?;
     let (client, status) = await_daemon(cli, &mut terminal).await?;
     let warning = version::check(status.daemon.version.as_deref());
-    let workspace =
-        match workspace::resolve_from_daemon(&client, settings.workspace.as_deref()).await {
-            Ok(workspace) => Some(workspace),
-            Err(error)
-                if settings.workspace.is_none()
-                    && error.to_string().starts_with("no workspace contains") =>
-            {
-                None
-            }
-            Err(error) => return Err(error),
-        };
+    let workspace = match workspace::resolve_from_daemon_with_source(
+        &client,
+        settings.workspace.as_deref(),
+        settings.workspace_source,
+    )
+    .await?
+    {
+        workspace::WorkspaceResolution::Selected(workspace) => Some(workspace),
+        workspace::WorkspaceResolution::Unresolved(_) => None,
+    };
     let workspace_ref = workspace.as_ref().map(|workspace| WorkspaceRef {
         id: workspace.id.clone(),
         name: workspace.name.clone(),

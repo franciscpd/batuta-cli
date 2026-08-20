@@ -33,4 +33,4 @@ pub use status::{DaemonStatus, StatusPayload};
 pub use stream::{SessionStopped, TranscriptDelta, TranscriptSnapshot};
 pub use timestamp::Timestamp;
 pub use transcript::{Entry, Part, Role, TranscriptPage, UiMessage};
-pub use workspace::{Workspace, WorkspacesResponse};
+pub use workspace::{AddWorkspaceOutcome, AddWorkspaceRequest, Workspace, WorkspacesResponse};

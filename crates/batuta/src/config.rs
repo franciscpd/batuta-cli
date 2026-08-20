@@ -1,4 +1,7 @@
-use crate::cli::{Cli, DaemonArg};
+use crate::{
+    cli::{Cli, DaemonArg},
+    workspace::WorkspaceSelectorSource,
+};
 use batuta_tui::app::{ColorMode, Preset, Settings as TuiSettings, ThemeMode, UiSettings};
 use serde::Deserialize;
 use std::{
@@ -54,6 +57,7 @@ pub struct Settings {
     pub daemon: DaemonCfg,
     pub ui: UiSettings,
     pub workspace: Option<String>,
+    pub workspace_source: Option<WorkspaceSelectorSource>,
     pub config_path: PathBuf,
     pub loaded: bool,
     pub warnings: Vec<String>,
@@ -240,6 +244,17 @@ pub fn resolve(cli: &Cli, env: &Env, file: Option<ConfigFile>) -> Result<Setting
         "runs_limit",
         &mut warnings,
     );
+    let (workspace, workspace_source) = match (
+        cli.workspace.as_deref().filter(|value| !value.is_empty()),
+        env.workspace.as_deref().filter(|value| !value.is_empty()),
+    ) {
+        (Some(value), _) => (Some(value.to_owned()), Some(WorkspaceSelectorSource::Flag)),
+        (None, Some(value)) => (
+            Some(value.to_owned()),
+            Some(WorkspaceSelectorSource::Environment),
+        ),
+        (None, None) => (None, None),
+    };
     Ok(Settings {
         preset,
         daemon: DaemonCfg {
@@ -253,7 +268,8 @@ pub fn resolve(cli: &Cli, env: &Env, file: Option<ConfigFile>) -> Result<Setting
             sessions_limit,
             runs_limit,
         },
-        workspace: cli.workspace.clone().or_else(|| env.workspace.clone()),
+        workspace,
+        workspace_source,
         config_path: path(cli),
         loaded: false,
         warnings,

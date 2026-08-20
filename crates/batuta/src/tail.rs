@@ -30,7 +30,18 @@ pub async fn run(
     };
     let status = client.status().await?;
     let warning = version::check(status.daemon.version.as_deref());
-    let workspace = workspace::resolve_from_daemon(&client, settings.workspace.as_deref()).await?;
+    let workspace = match workspace::resolve_from_daemon_with_source(
+        &client,
+        settings.workspace.as_deref(),
+        settings.workspace_source,
+    )
+    .await?
+    {
+        workspace::WorkspaceResolution::Selected(workspace) => workspace,
+        workspace::WorkspaceResolution::Unresolved(candidate) => {
+            return Err(workspace::no_workspace(&candidate.canonical_path));
+        }
+    };
     let selected_id = match requested_session {
         Some(id) => id.to_owned(),
         None => {
