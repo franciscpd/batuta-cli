@@ -38,12 +38,20 @@ fn failure(model: &mut Model, request: Request, error: String) -> Vec<Cmd> {
     }
     match &request {
         Request::AddWorkspace { .. } => {
+            if conflict(&error) {
+                let request = model.allocate(|id| Request::Workspaces { id });
+                return vec![Cmd::Get(request)];
+            }
             if let Some(crate::app::model::Overlay::WorkspaceOnboarding {
                 adding, message, ..
             }) = &mut model.overlay
             {
                 *adding = false;
-                *message = Some(format!("registration failed — {error}"));
+                *message = Some(if is_indeterminate_registration_error(&error) {
+                    "workspace was not confirmed added — connection lost".into()
+                } else {
+                    format!("registration failed — {error}")
+                });
             }
             Vec::new()
         }
@@ -154,6 +162,11 @@ fn conflict(error: &str) -> bool {
     error.contains("409") || error.to_lowercase().contains("already")
 }
 
+fn is_indeterminate_registration_error(error: &str) -> bool {
+    let error = error.to_lowercase();
+    error.contains("transport:") || error.contains("timeout")
+}
+
 fn not_found(error: &str) -> bool {
     error.contains("404") || error.to_lowercase().contains("not found")
 }
@@ -193,11 +206,17 @@ fn apply(model: &mut Model, request: Request, response: ApiResponse) -> Vec<Cmd>
                     ..
                 }) = &mut model.overlay
                 {
+                    let add_returned = *adding;
                     *adding = false;
-                    *message = Some(
+                    *message = Some(if add_returned {
+                        format!(
+                            "workspace add returned, but {} is not in the refreshed catalog",
+                            candidate.root_dir
+                        )
+                    } else {
                         "this directory is not registered; add it, refresh, or choose a workspace"
-                            .into(),
-                    );
+                            .into()
+                    });
                 }
                 return Vec::new();
             }
