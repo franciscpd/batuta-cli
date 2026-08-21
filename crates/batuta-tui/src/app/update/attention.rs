@@ -235,6 +235,7 @@ fn open(model: &mut Model) -> Vec<Cmd> {
             choices,
             deadline,
         }) => {
+            let commands = super::keys::open_session_id(model, session_id.clone());
             model.overlay = Some(Overlay::Clarify {
                 session_id,
                 request_id,
@@ -247,7 +248,7 @@ fn open(model: &mut Model) -> Vec<Cmd> {
                 hint: None,
             });
             model.dirty = true;
-            Vec::new()
+            commands
         }
         Some(AttentionSource::Overview {
             actions,

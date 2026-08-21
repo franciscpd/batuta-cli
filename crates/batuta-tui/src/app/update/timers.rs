@@ -1,5 +1,5 @@
 use crate::{
-    app::model::{Model, Panel},
+    app::model::Model,
     cmd::{Cmd, Request, TimerId},
 };
 
@@ -33,11 +33,6 @@ pub(super) fn timer(model: &mut Model, id: TimerId) -> Vec<Cmd> {
             }
             Vec::new()
         }
-        TimerId::DetailSwitchDebounce => match model.last_list_focus {
-            Panel::Sessions => super::keys::open_session(model),
-            Panel::Runs => super::keys::open_run(model),
-            _ => Vec::new(),
-        },
         TimerId::StatusPoll => {
             let request = model.allocate(|request_id| Request::Status { id: request_id });
             vec![

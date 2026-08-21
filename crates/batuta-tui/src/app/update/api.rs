@@ -1,6 +1,6 @@
 use crate::{
     app::{
-        model::{Detail, Model, Panel, PendingKind, SessionDetail, StreamStatus, page_into_detail},
+        model::{Detail, Model, PendingKind, StreamStatus, page_into_detail},
         panels::{attention, runs, sessions},
     },
     cmd::{Cmd, Request, RequestId, StreamId, TimerId},
@@ -345,10 +345,7 @@ fn apply(model: &mut Model, request: Request, response: ApiResponse) -> Vec<Cmd>
                 .filter(|detail| detail.session.id == id)
             {
                 detail.session = session;
-            } else {
-                model.detail = Detail::Session(Box::new(SessionDetail::new(session)));
             }
-            model.focus = Panel::Detail;
             model.dirty = true;
             Vec::new()
         }
@@ -593,9 +590,9 @@ fn refetch_run(model: &mut Model, workspace: &str, run: &str) -> Vec<Cmd> {
 }
 
 fn created_session(model: &mut Model, session: compozy_client::types::Session) -> Vec<Cmd> {
-    let Some(workspace) = model.workspace.as_ref().map(|value| value.id.clone()) else {
+    if model.workspace.is_none() {
         return Vec::new();
-    };
+    }
     model.create_session_pending = false;
     model.app_created_sessions.insert(session.id.clone());
     if !model
@@ -608,32 +605,9 @@ fn created_session(model: &mut Model, session: compozy_client::types::Session) -
     let new_id = session.id.clone();
     sessions::refilter(model, Some(&new_id));
     model.sessions.selected = model.sessions.items.iter().position(|row| row.id == new_id);
-    let mut detail = SessionDetail::new(session);
-    detail.composer.focused = true;
-    model.detail = Detail::Session(Box::new(detail));
-    model.focus = Panel::Detail;
-    model
-        .active_streams
-        .insert(StreamId::Transcript(new_id.clone()));
     let mut commands = model.set_success_toast("session created");
     if let Some(command) = sessions::request(model) {
         commands.push(command);
     }
-    let transcript = model.allocate(|id| Request::TranscriptPage {
-        id,
-        workspace: workspace.clone(),
-        session: new_id.clone(),
-        before_sequence: None,
-    });
-    let clarifications = model.allocate(|id| Request::Clarifications {
-        id,
-        workspace,
-        session: new_id.clone(),
-    });
-    commands.extend([
-        Cmd::Get(transcript),
-        Cmd::Get(clarifications),
-        Cmd::StartStream(StreamId::Transcript(new_id)),
-    ]);
     commands
 }

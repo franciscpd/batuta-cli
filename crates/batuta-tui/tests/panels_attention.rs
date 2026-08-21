@@ -127,6 +127,16 @@ fn ut_511_all_refresh_triggers_fetch_sources() {
             .iter()
             .any(|cmd| matches!(cmd, Cmd::Get(Request::Overview { .. })))
     );
+    assert_eq!(model.focus, Panel::Attention);
+}
+
+#[test]
+fn ut_012_attention_navigation_changes_only_selection() {
+    let mut model = populated();
+    assert!(update(&mut model, key(KeyCode::Char('j'))).is_empty());
+    assert_eq!(model.attention_selected, Some(1));
+    assert_eq!(model.focus, Panel::Attention);
+    assert!(matches!(model.detail, Detail::Empty));
 }
 
 #[test]
@@ -140,12 +150,14 @@ fn ut_512_count_and_more_title() {
 fn ut_513_enter_permission_and_run_open_context() {
     let mut model = populated();
     let commands = update(&mut model, key(KeyCode::Enter));
+    assert_eq!(model.focus, Panel::Detail);
     assert!(commands.iter().any(
         |cmd| matches!(cmd, Cmd::Get(Request::Session { session, .. }) if session == "sess-a")
     ));
     model = populated();
     model.attention_selected = Some(2);
     let commands = update(&mut model, key(KeyCode::Enter));
+    assert_eq!(model.focus, Panel::Detail);
     assert!(commands.iter().any(
         |cmd| matches!(cmd, Cmd::Get(Request::Run { run, .. }) if run == "looprun-parent1234")
     ));
@@ -542,6 +554,7 @@ fn ut_542_open_session_run_or_web() {
             .iter()
             .any(|cmd| matches!(cmd, Cmd::Get(Request::Run { .. })))
     );
+    assert_eq!(run.focus, Panel::Detail);
     let mut web = overview_model("needs_input", &["open"], "", "");
     update(&mut web, key(KeyCode::Enter));
     assert!(web.toast.unwrap().text.contains("open in web"));

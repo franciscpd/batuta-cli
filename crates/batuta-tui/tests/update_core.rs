@@ -82,19 +82,22 @@ fn ut_410_focus_router() {
         Panel::Detail,
         Panel::Sessions,
     ] {
-        update(&mut model, press(KeyCode::Tab));
+        assert!(update(&mut model, press(KeyCode::Tab)).is_empty());
         assert_eq!(model.focus, expected);
     }
-    update(
-        &mut model,
-        Msg::Key(KeyEvent::new(KeyCode::BackTab, KeyModifiers::SHIFT)),
+    assert!(
+        update(
+            &mut model,
+            Msg::Key(KeyEvent::new(KeyCode::BackTab, KeyModifiers::SHIFT)),
+        )
+        .is_empty()
     );
     assert_eq!(model.focus, Panel::Detail);
-    update(&mut model, press(KeyCode::Char('2')));
+    assert!(update(&mut model, press(KeyCode::Char('2'))).is_empty());
     assert_eq!(model.focus, Panel::Runs);
 }
 #[test]
-fn ut_411_and_ut_412_selection_opens_and_follows() {
+fn ut_001_006_selection_is_explicitly_activated() {
     let mut model = full();
     model.sessions.set_items(vec![
         SessionRow {
@@ -112,18 +115,19 @@ fn ut_411_and_ut_412_selection_opens_and_follows() {
             ..SessionRow::default()
         },
     ]);
-    update(&mut model, press(KeyCode::Char('j')));
+    let commands = update(&mut model, press(KeyCode::Char('j')));
+    assert_eq!(model.focus, Panel::Sessions);
+    assert!(
+        !commands
+            .iter()
+            .any(|command| matches!(command, Cmd::After(_, _)))
+    );
     let commands = update(&mut model, press(KeyCode::Enter));
     assert!(matches!(model.detail,Detail::Session(ref detail)if detail.session.id=="sess-b"));
     assert!(commands.iter().any(
         |command| matches!(command,Cmd::StartStream(StreamId::Transcript(id))if id=="sess-b")
     ));
-    model.focus = Panel::Sessions;
-    model.last_list_focus = Panel::Sessions;
-    let commands = update(&mut model, Msg::Timer(TimerId::DetailSwitchDebounce));
-    assert!(commands.iter().any(
-        |command| matches!(command,Cmd::Get(Request::Session{session,..})if session=="sess-b")
-    ));
+    assert_eq!(model.focus, Panel::Detail);
 }
 #[test]
 fn ut_413_and_ut_414_escape_and_digits_in_text() {
@@ -143,6 +147,8 @@ fn ut_413_and_ut_414_escape_and_digits_in_text() {
 fn ut_415_and_ut_416_empty_and_clamp() {
     let mut model = full();
     assert!(model.sessions.selected.is_none());
+    assert!(update(&mut model, press(KeyCode::Char('j'))).is_empty());
+    assert_eq!(model.focus, Panel::Sessions);
     assert!(update(&mut model, press(KeyCode::Enter)).is_empty());
     model
         .sessions

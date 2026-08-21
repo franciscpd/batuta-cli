@@ -246,7 +246,7 @@ fn ut_554_switching_sessions_stops_old_starts_new_and_drops_state() {
 }
 
 #[test]
-fn ut_555_selection_changes_debounce_to_last_session() {
+fn ut_004_005_rapid_and_boundary_selection_never_activate() {
     let mut model = model();
     respond(
         &mut model,
@@ -256,12 +256,12 @@ fn ut_555_selection_changes_debounce_to_last_session() {
     for _ in 0..5 {
         update(&mut model, key(KeyCode::Char('j')));
     }
-    let armed = update(&mut model, Msg::Timer(TimerId::DetailSwitchDebounce));
-    assert!(
-        armed
-            .iter()
-            .any(|cmd| matches!(cmd, Cmd::StartStream(StreamId::Transcript(id)) if id == "sess-b"))
+    assert_eq!(model.focus, Panel::Sessions);
+    assert_eq!(
+        model.sessions.selected().map(|row| row.id.as_str()),
+        Some("sess-b")
     );
+    assert!(matches!(model.detail, Detail::Empty));
 }
 
 #[test]

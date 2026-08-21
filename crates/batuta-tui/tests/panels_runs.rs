@@ -62,6 +62,7 @@ fn ut_493_enter_opens_run_and_stream() {
     model.focus = Panel::Runs;
     load(&mut model, true);
     let commands = update(&mut model, key(KeyCode::Enter));
+    assert_eq!(model.focus, Panel::Detail);
     assert!(
         matches!(model.detail, Detail::Run(ref detail) if detail.run_id == "looprun-parent1234")
     );
@@ -122,6 +123,19 @@ fn ut_497_live_poll_rearms_independent_of_focus() {
             .iter()
             .any(|cmd| matches!(cmd, Cmd::Get(Request::Runs { .. })))
     );
+    assert_eq!(model.focus, Panel::Attention);
+}
+
+#[test]
+fn ut_012_run_navigation_changes_only_selection() {
+    let mut model = model();
+    model.focus = Panel::Runs;
+    load(&mut model, true);
+    let selected = model.runs.selected;
+    assert!(update(&mut model, key(KeyCode::Char('j'))).is_empty());
+    assert_ne!(model.runs.selected, selected);
+    assert_eq!(model.focus, Panel::Runs);
+    assert!(matches!(model.detail, Detail::Empty));
 }
 
 #[test]
