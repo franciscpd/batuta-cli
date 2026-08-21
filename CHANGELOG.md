@@ -1,3 +1,47 @@
+## [v0.1.0-beta.4] - 2026-08-21
+
+### 🚀 Features
+
+- *(tui)* Add semantic terminal themes
+- Resolve and register workspaces deterministically
+
+### 🐛 Bug Fixes
+
+- Apply tail UI settings
+- Render one compact content panel
+- Preserve raw transcript payloads
+- *(tui)* Retain onboarding through workspace boot
+- *(tui)* Preserve canonical onboarding roots
+- *(tui)* Recover onboarding registration outcomes
+- Recover catalog refetch failure
+- *(tui)* Restore onboarding contract evidence
+- Require refresh after indeterminate add
+- *(tui)* Preserve registration diagnostics
+- *(tui)* Block duplicate onboarding add
+- *(tui)* Condense operational transcript updates
+- *(layout)* Prioritize contextual panels
+- *(tui)* Count off-tail transcript deltas
+- *(tui)* Preserve source selection across debug toggle
+- *(layout)* Distribute wide rail height
+- *(tui)* Align initial transcript selection
+- *(tui)* Preserve failed transcript entries
+- *(tui)* Preserve off-tail reset anchor
+- *(tui)* Add transcript visual contract evidence
+- *(tui)* Wrap transcript by display width
+- *(tui)* Add theme visual evidence
+- Block repeated unsupported workspace adds
+- Preserve unsupported workspace fallback
+- Keep compozy artifacts local
+
+### 🧪 Testing
+
+- Cover transcript render matrix
+- Cover onboarding fixture journeys
+- Isolate panic hook probe
+
+### ⚙️ Miscellaneous Tasks
+
+- Curate Compozy task history
 ## [v0.1.0-beta.3] - 2026-08-20
 
 ### 🐛 Bug Fixes
