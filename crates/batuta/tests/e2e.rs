@@ -1300,11 +1300,15 @@ fn e2e_101_unreachable_batuta_never_enters_alt_screen() {
 
 #[test]
 fn e2e_102_version_uses_package_and_floor() {
+    let expected = format!(
+        "batuta {} (compozy floor v0.3.0-beta.16)\n",
+        env!("CARGO_PKG_VERSION")
+    );
     command()
         .arg("--version")
         .assert()
         .success()
-        .stdout("batuta 0.1.0-beta.1 (compozy floor v0.3.0-beta.16)\n");
+        .stdout(expected);
 }
 
 #[test]

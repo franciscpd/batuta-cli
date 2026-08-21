@@ -7,6 +7,8 @@ packages = ["batuta"]
 [dist]
 # The preferred dist version to use in CI (Cargo.toml SemVer syntax)
 cargo-dist-version = "0.32.0"
+# release.yml intentionally preserves the manual release-origin gate.
+allow-dirty = ["ci"]
 # CI backends to support
 ci = "github"
 # Release builds are permitted only after the human-gated release PR merge.
