@@ -463,6 +463,28 @@ fn ut_732_unsupported_onboarding_shows_an_escaped_registration_command() {
     );
 }
 
+#[test]
+fn it_712_unsupported_onboarding_blocks_further_registration_writes() {
+    let mut model = onboarding_model();
+    let add = confirm_add(&mut model);
+    respond(
+        &mut model,
+        add,
+        ApiResponse::WorkspaceAdded(AddWorkspaceOutcome::Unsupported),
+    );
+
+    assert!(update(&mut model, key(KeyCode::Char('a'))).is_empty());
+    assert!(update(&mut model, key(KeyCode::Enter)).is_empty());
+    assert!(matches!(
+        model.overlay,
+        Some(Overlay::WorkspaceOnboarding {
+            confirming: false,
+            registration_complete: true,
+            ..
+        })
+    ));
+}
+
 fn onboarding_model() -> batuta_tui::Model {
     let mut model = batuta_tui::Model::new(
         Settings {

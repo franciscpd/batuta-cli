@@ -276,12 +276,14 @@ fn apply(model: &mut Model, request: Request, response: ApiResponse) -> Vec<Cmd>
                 if let Some(crate::app::model::Overlay::WorkspaceOnboarding {
                     adding,
                     confirming,
+                    registration_complete,
                     message,
                     ..
                 }) = &mut model.overlay
                 {
                     *adding = false;
                     *confirming = false;
+                    *registration_complete = true;
                     *message = model.startup_candidate.as_ref().map(|candidate| {
                         format!(
                             "This daemon cannot add workspaces through its API. Run: compozy workspace add {}",
