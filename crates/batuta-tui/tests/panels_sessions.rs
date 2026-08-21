@@ -378,6 +378,12 @@ fn ut_009_011_session_responses_preserve_later_operator_focus() {
         ApiResponse::Session(session_page().sessions.remove(0)),
     );
     assert_eq!(model.focus, Panel::Runs);
+    assert_eq!(
+        model
+            .session_detail()
+            .map(|detail| detail.session.name.as_deref()),
+        Some(Some("spike plan"))
+    );
 
     let request = Request::Session {
         id: id(499),
@@ -386,6 +392,37 @@ fn ut_009_011_session_responses_preserve_later_operator_focus() {
     };
     fail(&mut model, request, "late session request failed");
     assert_eq!(model.focus, Panel::Runs);
+}
+
+#[test]
+fn ut_010_out_of_order_background_messages_preserve_final_focus() {
+    let mut model = model();
+    load(&mut model);
+    let session_request = update(&mut model, key(KeyCode::Enter))
+        .into_iter()
+        .find_map(|command| match command {
+            Cmd::Get(request @ Request::Session { .. }) => Some(request),
+            _ => None,
+        })
+        .unwrap();
+    let stale_sessions_request = sessions_request(500);
+
+    update(&mut model, key(KeyCode::Char('2')));
+    update(&mut model, key(KeyCode::Char('3')));
+    update(&mut model, Msg::Timer(TimerId::StatusPoll));
+    respond(
+        &mut model,
+        session_request,
+        ApiResponse::Session(session_page().sessions.remove(0)),
+    );
+    respond(
+        &mut model,
+        stale_sessions_request,
+        ApiResponse::Sessions(Box::new(session_page())),
+    );
+    update(&mut model, Msg::Timer(TimerId::AttentionPoll));
+
+    assert_eq!(model.focus, Panel::Attention);
 }
 
 #[test]
