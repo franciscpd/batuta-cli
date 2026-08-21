@@ -9,6 +9,7 @@ use ratatui::{
     text::{Line, Span, Text},
 };
 use serde_json::Value;
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 pub fn rebuild(model: &mut Model) {
     let width = model.size.0.saturating_sub(4);
@@ -309,7 +310,7 @@ fn wrap_lines(lines: Vec<Line<'static>>, width: usize) -> Vec<Line<'static>> {
     for line in lines {
         let content = line.to_string();
         let chars = content.chars().collect::<Vec<_>>();
-        if chars.len() <= width || content.is_empty() {
+        if UnicodeWidthStr::width(content.as_str()) <= width || content.is_empty() {
             wrapped.push(line);
             continue;
         }
@@ -325,15 +326,20 @@ fn wrap_lines(lines: Vec<Line<'static>>, width: usize) -> Vec<Line<'static>> {
         let mut first = true;
         while !remaining.is_empty() {
             let prefix = if first { "" } else { indent.as_str() };
-            let available = width.saturating_sub(prefix.chars().count()).max(1);
-            let split = if remaining.len() <= available {
+            let available = width.saturating_sub(UnicodeWidthStr::width(prefix)).max(1);
+            let fitting = display_width_prefix_len(&remaining, available);
+            let split = if fitting == remaining.len() {
                 remaining.len()
             } else {
-                remaining[..available]
+                remaining[..fitting.max(1)]
                     .iter()
                     .rposition(|character| character.is_whitespace())
-                    .filter(|position| *position > 0)
-                    .unwrap_or(available)
+                    .filter(|position| {
+                        remaining[..*position]
+                            .iter()
+                            .any(|character| !character.is_whitespace())
+                    })
+                    .unwrap_or_else(|| fitting.max(1))
             };
             let chunk = remaining.drain(..split).collect::<String>();
             while remaining
@@ -347,6 +353,18 @@ fn wrap_lines(lines: Vec<Line<'static>>, width: usize) -> Vec<Line<'static>> {
         }
     }
     wrapped
+}
+
+fn display_width_prefix_len(characters: &[char], width: usize) -> usize {
+    let mut used = 0;
+    for (index, character) in characters.iter().enumerate() {
+        let character_width = UnicodeWidthChar::width(*character).unwrap_or(0);
+        if used + character_width > width {
+            return index;
+        }
+        used += character_width;
+    }
+    characters.len()
 }
 
 #[cfg(test)]
@@ -453,5 +471,31 @@ mod tests {
             .join("\n");
         assert!(rendered.contains(&presented_raw));
         assert!(!rendered.contains("… truncated"));
+    }
+
+    #[test]
+    fn wrap_lines_uses_terminal_display_width_for_wide_characters() {
+        let wrapped = wrap_lines(vec![Line::raw("  你好e")], 5);
+        let content = wrapped.iter().map(ToString::to_string).collect::<Vec<_>>();
+
+        assert_eq!(content, ["  你", "  好e"]);
+        assert!(
+            content
+                .iter()
+                .all(|line| UnicodeWidthStr::width(line.as_str()) <= 5)
+        );
+    }
+
+    #[test]
+    fn wrap_lines_keeps_combining_characters_within_display_width() {
+        let wrapped = wrap_lines(vec![Line::raw("  e\u{301}fg")], 4);
+        let content = wrapped.iter().map(ToString::to_string).collect::<Vec<_>>();
+
+        assert_eq!(content, ["  e\u{301}f", "  g"]);
+        assert!(
+            content
+                .iter()
+                .all(|line| UnicodeWidthStr::width(line.as_str()) <= 4)
+        );
     }
 }
