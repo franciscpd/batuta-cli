@@ -232,28 +232,32 @@ fn apply(model: &mut Model, request: Request, response: ApiResponse) -> Vec<Cmd>
                     adding,
                     confirming,
                     refresh_required,
+                    registration_unsupported,
                     message,
                     ..
                 }) = &mut model.overlay
                 {
                     let add_returned = *adding;
                     let refresh_was_required = *refresh_required;
+                    let registration_is_unsupported = *registration_unsupported;
                     *adding = false;
                     *confirming = false;
                     *refresh_required = false;
-                    *message = if add_returned {
-                        Some(format!(
-                            "workspace add returned, but {} is not in the refreshed catalog",
-                            candidate.root_dir
-                        ))
-                    } else if refresh_was_required {
-                        None
-                    } else {
-                        Some(
-                            "this directory is not registered; add it, refresh, or choose a workspace"
-                                .into(),
-                        )
-                    };
+                    if !registration_is_unsupported {
+                        *message = if add_returned {
+                            Some(format!(
+                                "workspace add returned, but {} is not in the refreshed catalog",
+                                candidate.root_dir
+                            ))
+                        } else if refresh_was_required {
+                            None
+                        } else {
+                            Some(
+                                "this directory is not registered; add it, refresh, or choose a workspace"
+                                    .into(),
+                            )
+                        };
+                    }
                 }
                 return Vec::new();
             }
@@ -277,6 +281,7 @@ fn apply(model: &mut Model, request: Request, response: ApiResponse) -> Vec<Cmd>
                     adding,
                     confirming,
                     registration_complete,
+                    registration_unsupported,
                     message,
                     ..
                 }) = &mut model.overlay
@@ -284,6 +289,7 @@ fn apply(model: &mut Model, request: Request, response: ApiResponse) -> Vec<Cmd>
                     *adding = false;
                     *confirming = false;
                     *registration_complete = true;
+                    *registration_unsupported = true;
                     *message = model.startup_candidate.as_ref().map(|candidate| {
                         format!(
                             "This daemon cannot add workspaces through its API. Run: compozy workspace add {}",

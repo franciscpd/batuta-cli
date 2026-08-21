@@ -511,6 +511,7 @@ fn onboarding_key(model: &mut Model, key: KeyEvent) -> Vec<Cmd> {
         booting,
         refresh_required,
         registration_complete,
+        registration_unsupported,
         message,
         details_expanded,
         ..
@@ -530,7 +531,9 @@ fn onboarding_key(model: &mut Model, key: KeyEvent) -> Vec<Cmd> {
         KeyCode::Char('w') => super::picker::open(model, false),
         KeyCode::Char('q') => quit(model),
         KeyCode::Char('r') => {
-            *message = Some("refreshing workspace catalog…".into());
+            if !*registration_unsupported {
+                *message = Some("refreshing workspace catalog…".into());
+            }
             let request = model.allocate(|id| Request::Workspaces { id });
             model.dirty = true;
             vec![Cmd::Get(request)]

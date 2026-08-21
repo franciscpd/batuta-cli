@@ -485,6 +485,41 @@ fn it_712_unsupported_onboarding_blocks_further_registration_writes() {
     ));
 }
 
+#[test]
+fn ut_731_unsupported_onboarding_preserves_the_fallback_after_an_empty_refresh() {
+    let mut model = onboarding_model();
+    let add = confirm_add(&mut model);
+    respond(
+        &mut model,
+        add,
+        ApiResponse::WorkspaceAdded(AddWorkspaceOutcome::Unsupported),
+    );
+
+    let refresh = update(&mut model, key(KeyCode::Char('r')))
+        .into_iter()
+        .find_map(|command| match command {
+            Cmd::Get(request @ Request::Workspaces { .. }) => Some(request),
+            _ => None,
+        })
+        .expect("unsupported onboarding refreshes the catalog read-only");
+    assert!(respond(&mut model, refresh, ApiResponse::Workspaces(Vec::new())).is_empty());
+
+    assert!(matches!(
+        model.overlay,
+        Some(Overlay::WorkspaceOnboarding {
+            registration_complete: true,
+            message: Some(ref message),
+            ..
+        }) if message == "This daemon cannot add workspaces through its API. Run: compozy workspace add /tmp/new-workspace"
+    ));
+    let screen = render(&model, 100, 30);
+    assert!(
+        screen.contains("workspace add /tmp/new-workspace"),
+        "{screen}"
+    );
+    assert!(!screen.contains("[a] add this directory"), "{screen}");
+}
+
 fn onboarding_model() -> batuta_tui::Model {
     let mut model = batuta_tui::Model::new(
         Settings {
