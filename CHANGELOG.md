@@ -1,32 +1,12 @@
-## [v0.1.0-beta.3] - 2026-08-20
-
-### 🐛 Bug Fixes
-
-- *(ci)* Allow managed release workflow edits
-
-### 💼 Other
-
-- V0.1.0-beta.3
-## [v0.1.0-beta.2] - 2026-08-20
+## [v0.1.0-beta.4] - 2026-08-21
 
 ### 🚀 Features
 
-- *(startup)* Add daemon retry screen
-- *(doctor)* Add catalog stream health
-- *(resilience)* Implement task_01 draining state & catalog stream fix
 - *(tui)* Add semantic terminal themes
 - Resolve and register workspaces deterministically
 
 ### 🐛 Bug Fixes
 
-- *(lockfile)* Include batuta libc dependency
-- *(startup)* Retry incompatible daemons
-- *(runs)* Guard final draining dispatch
-- *(boundaries)* Support empty Cargo cache
-- *(ci)* Gate host on release origin
-- *(tui)* Report draining clarification writes
-- *(ci)* Install pinned daemon asset
-- *(ci)* Provision boundary tools in tests
 - Apply tail UI settings
 - Render one compact content panel
 - Preserve raw transcript payloads
@@ -53,6 +33,39 @@
 - Preserve unsupported workspace fallback
 - Keep compozy artifacts local
 
+### 🧪 Testing
+
+- Cover transcript render matrix
+- Cover onboarding fixture journeys
+- Isolate panic hook probe
+
+### ⚙️ Miscellaneous Tasks
+
+- Curate Compozy task history
+## [v0.1.0-beta.3] - 2026-08-20
+
+### 🐛 Bug Fixes
+
+- *(ci)* Allow managed release workflow edits
+## [v0.1.0-beta.2] - 2026-08-20
+
+### 🚀 Features
+
+- *(startup)* Add daemon retry screen
+- *(doctor)* Add catalog stream health
+- *(resilience)* Implement task_01 draining state & catalog stream fix
+
+### 🐛 Bug Fixes
+
+- *(lockfile)* Include batuta libc dependency
+- *(startup)* Retry incompatible daemons
+- *(runs)* Guard final draining dispatch
+- *(boundaries)* Support empty Cargo cache
+- *(ci)* Gate host on release origin
+- *(tui)* Report draining clarification writes
+- *(ci)* Install pinned daemon asset
+- *(ci)* Provision boundary tools in tests
+
 ### 💼 Other
 
 - V0.1.0-beta.2
@@ -67,9 +80,6 @@
 - *(resilience)* Cover draining empty runs
 - *(e2e)* Prove resilience terminal states
 - *(e2e)* Reap PTY tree and prove reads
-- Cover transcript render matrix
-- Cover onboarding fixture journeys
-- Isolate panic hook probe
 - *(cli)* Derive expected package version
 
 ### ⚙️ Miscellaneous Tasks
@@ -78,7 +88,6 @@
 - Prepare repository for publishing
 - Add gated release pipeline
 - Run contract job independently
-- Curate Compozy task history
 ## [v0.1.0-beta.1] - 2026-08-18
 
 ### 🚀 Features
