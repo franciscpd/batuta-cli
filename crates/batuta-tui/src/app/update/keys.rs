@@ -98,30 +98,13 @@ pub(super) fn key(model: &mut Model, key: KeyEvent) -> Vec<Cmd> {
 
 fn focus_changed(model: &mut Model) -> Vec<Cmd> {
     model.dirty = true;
-    if matches!(
-        model.focus,
-        Panel::Sessions | Panel::Runs | Panel::Attention
-    ) {
-        model.last_list_focus = model.focus;
-    }
-    vec![Cmd::After(
-        Duration::from_millis(150),
-        TimerId::DetailSwitchDebounce,
-    )]
+    Vec::new()
 }
 
 fn list_key(model: &mut Model, key: KeyEvent) -> Vec<Cmd> {
     if model.focus == Panel::Attention {
         return super::attention::key(model, key);
     }
-    let movement = matches!(
-        key.code,
-        KeyCode::Char('j' | 'k' | 'g' | 'G')
-            | KeyCode::Down
-            | KeyCode::Up
-            | KeyCode::PageDown
-            | KeyCode::PageUp
-    );
     match model.focus {
         Panel::Sessions => match key.code {
             KeyCode::Char('j') | KeyCode::Down | KeyCode::PageDown | KeyCode::Char('G') => {
@@ -154,14 +137,7 @@ fn list_key(model: &mut Model, key: KeyEvent) -> Vec<Cmd> {
         Panel::Detail => return Vec::new(),
     }
     model.dirty = true;
-    if movement {
-        vec![Cmd::After(
-            Duration::from_millis(150),
-            TimerId::DetailSwitchDebounce,
-        )]
-    } else {
-        Vec::new()
-    }
+    Vec::new()
 }
 
 pub(super) fn open_session(model: &mut Model) -> Vec<Cmd> {
@@ -270,6 +246,7 @@ pub(super) fn open_run_id(model: &mut Model, id: String) -> Vec<Cmd> {
         confirm: None,
         stream: StreamStatus::Live,
     }));
+    model.focus = Panel::Detail;
     model.active_streams.insert(StreamId::RunEvents(id.clone()));
     let request = model.allocate(|request_id| Request::Run {
         id: request_id,

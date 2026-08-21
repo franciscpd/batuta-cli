@@ -43,7 +43,6 @@ pub enum TimerId {
     CatalogDebounce,
     ToastExpiry,
     QuitGuard,
-    DetailSwitchDebounce,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

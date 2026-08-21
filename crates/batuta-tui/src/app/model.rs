@@ -516,7 +516,6 @@ pub struct Model {
     pub stream_cursors: HashMap<StreamId, String>,
     pub theme: Theme,
     pub quit_guard: bool,
-    pub last_list_focus: Panel,
     next_request: u64,
     next_message: u64,
 }
@@ -584,7 +583,6 @@ impl Model {
                 std::env::var("COLORFGBG").ok().as_deref(),
             ),
             quit_guard: false,
-            last_list_focus: Panel::Sessions,
             next_request: 1,
             next_message: 1,
         }
