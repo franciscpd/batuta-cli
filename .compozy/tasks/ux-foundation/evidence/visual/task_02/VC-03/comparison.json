@@ -1,1 +1,0 @@
-{"contract":"VC-03","state":"global debug mode","viewport":"120x40","reference":"_uiux.md#global-debug-mode; _spec.md#presentation-invariants","implementation_snapshot":"crates/batuta-tui/tests/snapshots/render__ut_712_raw_debug_120x40.snap","result":"PASS","blocking_divergences":0}

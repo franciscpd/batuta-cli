@@ -1,1 +1,0 @@
-{"contract":"VC-04","state":"narrow one-content-panel layout","viewport":"90x30","reference":"_uiux.md#narrow-80-99-columns","implementation_snapshot":"crates/batuta-tui/tests/snapshots/render__ut_732_attention_dark_90x30.snap","result":"PASS","blocking_divergences":0}

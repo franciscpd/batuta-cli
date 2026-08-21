@@ -1,1 +1,0 @@
-{"contract":"VC-02","state":"collapsed and expanded tool disclosure","viewport":"100x30","reference":"_uiux.md#collapsed-and-expanded-tool","implementation_snapshots":["crates/batuta-tui/tests/snapshots/render__ut_732_tool_collapsed_100x30.snap","crates/batuta-tui/tests/snapshots/render__ut_732_tool_expanded_100x30.snap"],"result":"PASS","blocking_divergences":0}

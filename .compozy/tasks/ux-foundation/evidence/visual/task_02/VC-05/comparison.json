@@ -1,1 +1,0 @@
-{"contract":"VC-05","state":"medium detail plus contextual panel","viewport":"120x40","reference":"_uiux.md#medium-100-139-columns","implementation_snapshot":"crates/batuta-tui/tests/snapshots/render__ut_732_attention_dark_120x40.snap","result":"PASS","blocking_divergences":0}
