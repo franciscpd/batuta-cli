@@ -1,0 +1,54 @@
+---
+source: crates/batuta-tui/tests/render.rs
+expression: output
+---
+batuta · batuta-cli · sess-807cee9774b33f68 · batuta · "Analisar e implementar projeto conforme documentação existente" · active
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+beginning of transcript
+▸ user
+  Unicode: café 東 京  indented continuation long-token-0123456789abcdef0123456789abcdef0123456789abcdef
+
+▸ batuta
+  Markdown preserves whitespace and wraps this deliberately extended conversation without dropping content.▍
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+j/k move  Enter expand  t reasoning  D raw debug  G newest  g oldest  q quit                                                                                                    live

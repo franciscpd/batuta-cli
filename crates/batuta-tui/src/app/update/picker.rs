@@ -35,6 +35,12 @@ pub(super) fn apply(model: &mut Model, values: Vec<compozy_client::types::Worksp
 }
 
 pub(super) fn key(model: &mut Model, key: KeyEvent) -> Vec<Cmd> {
+    if key.code == KeyCode::Esc
+        && let Some(candidate) = model.startup_candidate.clone()
+    {
+        model.start_workspace_onboarding(candidate);
+        return Vec::new();
+    }
     let Some(Overlay::WorkspacePicker {
         selected,
         items,
@@ -85,8 +91,12 @@ pub(super) fn key(model: &mut Model, key: KeyEvent) -> Vec<Cmd> {
     }
 }
 
-fn switch(model: &mut Model, workspace: WorkspaceRef) -> Vec<Cmd> {
+pub(super) fn switch(model: &mut Model, workspace: WorkspaceRef) -> Vec<Cmd> {
     let mut commands = model.all_stop_cmds();
+    let onboarding_candidate = match &model.overlay {
+        Some(Overlay::WorkspaceOnboarding { candidate, .. }) => Some(candidate.clone()),
+        _ => None,
+    };
     let late_writes = model
         .pending
         .iter()
@@ -102,7 +112,24 @@ fn switch(model: &mut Model, workspace: WorkspaceRef) -> Vec<Cmd> {
     let mode = model.mode;
     let mut next = Model::new(settings, mode);
     next.late_writes = late_writes;
-    commands.extend(next.initial_cmds());
+    let boot_commands = next.initial_cmds();
+    if let Some(candidate) = onboarding_candidate {
+        next.start_workspace_onboarding(candidate);
+        if let Some(Overlay::WorkspaceOnboarding { booting, .. }) = &mut next.overlay {
+            *booting = true;
+        }
+        next.startup_boot_pending = next
+            .pending
+            .iter()
+            .filter_map(|(id, pending)| match pending {
+                crate::app::PendingKind::Request(
+                    Request::Sessions { .. } | Request::Runs { .. } | Request::Overview { .. },
+                ) => Some(*id),
+                _ => None,
+            })
+            .collect();
+    }
+    commands.extend(boot_commands);
     *model = next;
     commands
 }

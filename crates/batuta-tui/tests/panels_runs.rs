@@ -21,6 +21,7 @@ fn load(model: &mut batuta_tui::Model, live: bool) -> Vec<Cmd> {
 #[test]
 fn ut_490_rows_glyphs_aggregates_and_query_snapshot() {
     let mut model = model();
+    model.focus = Panel::Runs;
     let commands = load(&mut model, true);
     assert!(commands.contains(&Cmd::After(Duration::from_secs(5), TimerId::RunsPoll)));
     insta::assert_snapshot!("runs_populated_120x40", render(&model, 120, 40));
@@ -80,6 +81,7 @@ fn ut_494_empty_state() {
 #[test]
 fn ut_495_children_are_indented_under_parent() {
     let mut model = model();
+    model.focus = Panel::Runs;
     load(&mut model, true);
     let screen = render(&model, 100, 30);
     let parent = screen
@@ -141,6 +143,7 @@ fn ut_498_terminal_result_stops_poll() {
 #[test]
 fn ut_499_poll_error_keeps_rows_marks_stale_and_rearms() {
     let mut model = model();
+    model.focus = Panel::Runs;
     load(&mut model, true);
     let commands = fail(&mut model, runs_request(203), "temporary error");
     assert_eq!(model.runs.items.len(), 2);

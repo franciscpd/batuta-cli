@@ -1,0 +1,34 @@
+---
+source: crates/batuta-tui/tests/render.rs
+expression: output
+---
+batuta · batuta-cli · sess-807cee9774b33f68 · batuta · "Analisar e implementar …" · active
+──────────────────────────────────────────────────────────────────────────────────────────
+beginning of transcript
+▸ batuta
+  The deployment could not be completed. Retry after checking the token.
+  × failed deploy
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+──────────────────────────────────────────────────────────────────────────────────────────
+j/k move  Enter expand  t reasoning  D raw debug  G newest  g oldest  q quit          live

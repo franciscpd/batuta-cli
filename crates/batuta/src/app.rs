@@ -16,23 +16,28 @@ pub async fn run(cli: &Cli, settings: &Settings) -> Result<(), AppError> {
         .map_err(|error| AppError::daemon(format!("initialize terminal: {error}")))?;
     let (client, status) = await_daemon(cli, &mut terminal).await?;
     let warning = version::check(status.daemon.version.as_deref());
-    let workspace =
-        match workspace::resolve_from_daemon(&client, settings.workspace.as_deref()).await {
-            Ok(workspace) => Some(workspace),
-            Err(error)
-                if settings.workspace.is_none()
-                    && error.to_string().starts_with("no workspace contains") =>
-            {
-                None
-            }
-            Err(error) => return Err(error),
-        };
+    let resolution = workspace::resolve_from_daemon_with_source(
+        &client,
+        settings.workspace.as_deref(),
+        settings.workspace_source,
+    )
+    .await?;
+    let workspace = match &resolution {
+        workspace::WorkspaceResolution::Selected(workspace) => Some(workspace.clone()),
+        workspace::WorkspaceResolution::Unresolved(_) => None,
+    };
     let workspace_ref = workspace.as_ref().map(|workspace| WorkspaceRef {
         id: workspace.id.clone(),
         name: workspace.name.clone(),
         root_dir: workspace.root_dir.clone(),
     });
     let mut model = Model::new(settings.tui_settings(workspace_ref), AppMode::Full);
+    if let workspace::WorkspaceResolution::Unresolved(candidate) = resolution {
+        model.start_workspace_onboarding(batuta_tui::app::WorkspaceCandidate {
+            name: candidate.name,
+            root_dir: candidate.canonical_path.display().to_string(),
+        });
+    }
     model.daemon.status = status.daemon.status;
     model.daemon.version = status.daemon.version;
     if let Some(warning) = warning {

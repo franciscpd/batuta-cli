@@ -224,6 +224,7 @@ fn ut_473_catalog_503_falls_through_to_generic_retry_handling() {
                 message: "subscriber unavailable".into(),
                 code: None,
                 details: None,
+                diagnostic: None,
             })),
         },
     );

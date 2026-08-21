@@ -53,7 +53,7 @@ async fn run_command(cli: Cli, settings: config::Settings) -> i32 {
         None => app::run(&cli, &settings).await,
         Some(Command::Doctor) => doctor::run(&cli, &settings).await,
         Some(Command::Sessions { all_agents, limit }) => {
-            sessions::run(&cli, all_agents, limit).await
+            sessions::run(&cli, &settings, all_agents, limit).await
         }
         Some(Command::Tail {
             ref session,

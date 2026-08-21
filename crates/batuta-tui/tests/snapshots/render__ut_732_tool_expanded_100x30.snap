@@ -1,0 +1,34 @@
+---
+source: crates/batuta-tui/tests/render.rs
+expression: "render(expanded_model, 100, 30)"
+---
+batuta · batuta-cli · sess-807cee9774b33f68 · batuta · "Analisar e implementar projeto co…" · active
+────────────────────────────────────────────────────────────────────────────────────────────────────
+beginning of transcript
+▸ user
+  Nos vamos analisar para implementar o projeto
+
+▸ batuta
+  Vou começar pelo gate de entrega.
+
+  - ler contrato
+  - implementar▍
+  ▸ reasoning (14 lines)
+  ✓ completed mcp__compozy-hosted-tools__compozy__config_get
+    input
+      {
+        "path": "loops.inputs.batuta-deliver.auto_commit"
+      }
+    output
+      {
+        "value": true
+      }
+  × failed mcp__compozy-hosted-tools__compozy__provider_models_list
+    error
+      output schema mismatch
+  ▶ tool Task
+    input
+      {
+        "description": "Track A: daemon API facts"
+────────────────────────────────────────────────────────────────────────────────────────────────────
+j/k move  Enter expand  t reasoning  D raw debug  G newest  g oldest  q quit                    live

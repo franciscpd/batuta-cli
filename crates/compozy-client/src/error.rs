@@ -16,6 +16,7 @@ pub enum Error {
         message: String,
         code: Option<String>,
         details: Option<Value>,
+        diagnostic: Option<Value>,
     },
     #[error("route missing in this daemon version: {method} {path}")]
     RouteMissing { method: &'static str, path: String },

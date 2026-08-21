@@ -99,6 +99,25 @@ mod tests {
 
     #[test]
     fn ut_453_panic_hook_restores_before_panic_output() {
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "terminal::tests::panic_hook_restore_probe",
+                "--ignored",
+            ])
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "isolated panic-hook probe failed\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr),
+        );
+    }
+
+    #[test]
+    #[ignore = "run by ut_453 in an isolated process"]
+    fn panic_hook_restore_probe() {
         let restores = Arc::new(AtomicUsize::new(0));
         let copy = restores.clone();
         install_panic_hook_with(Arc::new(move || {

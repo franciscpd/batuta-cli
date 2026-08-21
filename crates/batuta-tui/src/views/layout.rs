@@ -64,25 +64,12 @@ pub fn areas(area: Rect, model: &Model) -> Areas {
             footer: rows[2],
         };
     }
-    let columns = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints(if mode == LayoutMode::Compact {
-            [Constraint::Length(30), Constraint::Min(50)]
-        } else {
-            [Constraint::Percentage(40), Constraint::Percentage(60)]
-        })
-        .split(rows[1]);
     if mode == LayoutMode::Compact {
-        let shown = if model.focus == Panel::Detail {
-            model.last_list_focus
-        } else {
-            model.focus
-        };
-        let (sessions, runs, attention) = match shown {
-            Panel::Sessions => (columns[0], zero, zero),
-            Panel::Runs => (zero, columns[0], zero),
-            Panel::Attention => (zero, zero, columns[0]),
-            Panel::Detail => (columns[0], zero, zero),
+        let (sessions, runs, attention, detail) = match model.focus {
+            Panel::Sessions => (rows[1], zero, zero, zero),
+            Panel::Runs => (zero, rows[1], zero, zero),
+            Panel::Attention => (zero, zero, rows[1], zero),
+            Panel::Detail => (zero, zero, zero, rows[1]),
         };
         Areas {
             mode,
@@ -90,17 +77,17 @@ pub fn areas(area: Rect, model: &Model) -> Areas {
             sessions,
             runs,
             attention,
-            detail: columns[1],
+            detail,
             footer: rows[2],
         }
     } else {
+        let columns = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([Constraint::Percentage(40), Constraint::Percentage(60)])
+            .split(rows[1]);
         let left = Layout::default()
             .direction(Direction::Vertical)
-            .constraints([
-                Constraint::Percentage(40),
-                Constraint::Percentage(30),
-                Constraint::Percentage(30),
-            ])
+            .constraints(contextual_constraints(area.width, model))
             .split(columns[0]);
         Areas {
             mode,
@@ -112,4 +99,89 @@ pub fn areas(area: Rect, model: &Model) -> Areas {
             footer: rows[2],
         }
     }
+}
+
+const COMPACT_PANEL_HEIGHT: u16 = 3;
+
+fn contextual_constraints(width: u16, model: &Model) -> [Constraint; 3] {
+    let panels = [Panel::Sessions, Panel::Runs, Panel::Attention];
+    if width < 140 {
+        let grown = contextual_panel_to_grow(model);
+        panels.map(|panel| contextual_constraint(grown, panel))
+    } else {
+        panels.map(|panel| wide_contextual_constraint(model, panel))
+    }
+}
+
+fn contextual_constraint(grown: Option<Panel>, panel: Panel) -> Constraint {
+    if grown == Some(panel) {
+        Constraint::Fill(1)
+    } else {
+        Constraint::Length(COMPACT_PANEL_HEIGHT)
+    }
+}
+
+fn wide_contextual_constraint(model: &Model, panel: Panel) -> Constraint {
+    match panel_relevance(model, panel) {
+        0 => Constraint::Length(COMPACT_PANEL_HEIGHT),
+        relevance => Constraint::Fill(relevance.into()),
+    }
+}
+
+fn contextual_panel_to_grow(model: &Model) -> Option<Panel> {
+    let mut best = None;
+    let mut best_relevance = 0;
+    for panel in [Panel::Sessions, Panel::Runs, Panel::Attention] {
+        let relevance = panel_relevance(model, panel);
+        if relevance > best_relevance {
+            best = Some(panel);
+            best_relevance = relevance;
+        }
+    }
+    best
+}
+
+fn panel_relevance(model: &Model, panel: Panel) -> u8 {
+    if panel == Panel::Attention && !model.attention.is_empty() {
+        4
+    } else if model.focus == panel {
+        3
+    } else if panel == Panel::Runs
+        && model
+            .runs
+            .items
+            .iter()
+            .any(|run| !is_terminal_run(&run.status))
+    {
+        2
+    } else if panel_is_populated(model, panel) {
+        1
+    } else {
+        0
+    }
+}
+
+fn panel_is_populated(model: &Model, panel: Panel) -> bool {
+    match panel {
+        Panel::Sessions => !model.sessions.items.is_empty(),
+        Panel::Runs => !model.runs.items.is_empty(),
+        Panel::Attention => !model.attention.is_empty(),
+        Panel::Detail => false,
+    }
+}
+
+fn is_terminal_run(status: &str) -> bool {
+    matches!(
+        status,
+        "done"
+            | "succeeded"
+            | "completed"
+            | "failed"
+            | "canceled"
+            | "cancelled"
+            | "killed"
+            | "no-op"
+            | "no_op"
+            | "noop"
+    )
 }

@@ -19,6 +19,18 @@ pub struct Workspace {
     pub updated_at: Option<Timestamp>,
 }
 
+#[derive(Clone, Debug, Serialize)]
+pub struct AddWorkspaceRequest {
+    pub name: String,
+    pub root_dir: String,
+}
+
+#[derive(Clone, Debug)]
+pub enum AddWorkspaceOutcome {
+    Added(Workspace),
+    Unsupported,
+}
+
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub struct WorkspacesResponse {
     #[serde(default)]

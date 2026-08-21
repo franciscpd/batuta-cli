@@ -1,5 +1,8 @@
 use crate::{app, cli::Cli, config::Settings, exit::AppError, probe, version, workspace};
-use batuta_tui::app::{FooterState, Model, SessionHeader};
+use batuta_tui::{
+    app::{ColorMode, FooterState, Model, Preset, SessionHeader, UiSettings},
+    theme::Theme,
+};
 use compozy_client::{
     Error, SessionQuery,
     types::{Session, SessionPage, Workspace},
@@ -30,7 +33,18 @@ pub async fn run(
     };
     let status = client.status().await?;
     let warning = version::check(status.daemon.version.as_deref());
-    let workspace = workspace::resolve_from_daemon(&client, settings.workspace.as_deref()).await?;
+    let workspace = match workspace::resolve_from_daemon_with_source(
+        &client,
+        settings.workspace.as_deref(),
+        settings.workspace_source,
+    )
+    .await?
+    {
+        workspace::WorkspaceResolution::Selected(workspace) => workspace,
+        workspace::WorkspaceResolution::Unresolved(candidate) => {
+            return Err(workspace::no_workspace(&candidate.canonical_path));
+        }
+    };
     let selected_id = match requested_session {
         Some(id) => id.to_owned(),
         None => {
@@ -84,9 +98,22 @@ async fn run_terminal(
             detail: stop_detail,
         };
     }
-    model.settings.preset = settings.preset.clone();
-    model.settings.ui = settings.ui.clone();
+    apply_settings(&mut model, settings.preset.clone(), settings.ui.clone());
     app::run_model(model, client).await
+}
+
+fn apply_settings(model: &mut Model, preset: Preset, ui: UiSettings) {
+    model.settings.preset = preset;
+    model.settings.ui = ui;
+    model.theme = Theme::with_variant(
+        model.settings.ui.color != ColorMode::Never,
+        model.settings.ui.theme.into(),
+        std::env::var("COLORFGBG").ok().as_deref(),
+    );
+    if let Some(detail) = model.session_detail_mut() {
+        detail.view.render_cache.clear();
+        detail.view.cache_dirty = true;
+    }
 }
 
 fn selection_query(workspace: &str, all_agents: bool) -> SessionQuery<'_> {
@@ -138,6 +165,7 @@ fn validate_session_id(id: &str) -> Result<(), AppError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use batuta_tui::{app::ThemeMode, theme::ThemeVariant};
     use compozy_client::types::Page;
 
     #[test]
@@ -193,5 +221,20 @@ mod tests {
             tty_required_error(),
             "tail needs a terminal; use `batuta sessions --json` for scripting"
         );
+    }
+
+    #[test]
+    fn ut_106_tail_applies_configured_theme_and_color_mode() {
+        let mut model = Model::tail(SessionHeader::default());
+        let mut ui = model.settings.ui.clone();
+        ui.color = ColorMode::Never;
+        ui.theme = ThemeMode::Light;
+        let preset = model.settings.preset.clone();
+
+        apply_settings(&mut model, preset, ui);
+
+        assert!(!model.theme.color);
+        assert_eq!(model.theme.variant, ThemeVariant::Light);
+        assert!(model.session_detail().unwrap().view.cache_dirty);
     }
 }

@@ -2,7 +2,7 @@ use crate::{
     app::model::{FooterState, Model, StreamStatus},
     cmd::{Cmd, StreamId},
     msg::AnyStreamEvent,
-    transcript::Applied,
+    transcript::{Applied, PresentationRow},
 };
 use compozy_client::{Error, StreamEvent, TranscriptEvent, types::TranscriptSnapshot};
 
@@ -126,42 +126,56 @@ fn transcript(model: &mut Model, session: &str, event: TranscriptEvent) -> Vec<C
     };
     match event {
         TranscriptEvent::Snapshot(snapshot) => apply_snapshot(detail, snapshot),
-        TranscriptEvent::Delta(delta) => match detail.transcript.apply_delta(delta.clone()) {
-            Applied::Ok => {
-                detail.view.cache_dirty = true;
-                if detail.view.follow {
-                    detail.view.selection = detail.transcript.len().saturating_sub(1);
-                }
-                Vec::new()
-            }
-            Applied::UnknownStart(_) => {
-                if detail.view.fetching {
+        TranscriptEvent::Delta(delta) => {
+            let raw_updates = delta.entries.len();
+            match detail.transcript.apply_delta(delta.clone()) {
+                Applied::Ok => {
+                    detail.view.cache_dirty = true;
+                    if detail.view.follow {
+                        detail.view.selection = detail
+                            .transcript
+                            .presentation_rows(detail.view.raw_debug)
+                            .len()
+                            .saturating_sub(1);
+                    } else if raw_updates > 0 {
+                        let previous = match detail.view.footer {
+                            FooterState::NewBelow(count) => count,
+                            _ => 0,
+                        };
+                        detail.view.footer =
+                            FooterState::NewBelow(previous.saturating_add(raw_updates));
+                    }
                     Vec::new()
-                } else {
-                    detail.view.fetching = true;
-                    let session = session.to_owned();
-                    let request = model.allocate(|id| crate::cmd::Request::TranscriptPage {
-                        id,
-                        workspace,
-                        session,
-                        before_sequence: None,
-                    });
-                    vec![Cmd::Get(request)]
                 }
+                Applied::UnknownStart(_) => {
+                    if detail.view.fetching {
+                        Vec::new()
+                    } else {
+                        detail.view.fetching = true;
+                        let session = session.to_owned();
+                        let request = model.allocate(|id| crate::cmd::Request::TranscriptPage {
+                            id,
+                            workspace,
+                            session,
+                            before_sequence: None,
+                        });
+                        vec![Cmd::Get(request)]
+                    }
+                }
+                Applied::FenceMismatch => apply_snapshot(
+                    detail,
+                    TranscriptSnapshot {
+                        epoch: delta.epoch,
+                        generation: delta.generation,
+                        entries: delta.entries,
+                        max_sequence: delta.max_sequence.max(delta.cursor),
+                        reset: true,
+                        reason: Some("epoch_mismatch".into()),
+                        ..TranscriptSnapshot::default()
+                    },
+                ),
             }
-            Applied::FenceMismatch => apply_snapshot(
-                detail,
-                TranscriptSnapshot {
-                    epoch: delta.epoch,
-                    generation: delta.generation,
-                    entries: delta.entries,
-                    max_sequence: delta.max_sequence.max(delta.cursor),
-                    reset: true,
-                    reason: Some("epoch_mismatch".into()),
-                    ..TranscriptSnapshot::default()
-                },
-            ),
-        },
+        }
         TranscriptEvent::Stopped(stopped) => {
             detail.view.stopped = true;
             detail.stream = StreamStatus::Stopped;
@@ -212,14 +226,24 @@ fn apply_snapshot(
     let reset = snapshot.reset;
     let reason = snapshot.reason.clone().unwrap_or_else(|| "reset".into());
     let old_len = detail.transcript.len();
+    let selected_source = (!detail.view.follow)
+        .then(|| selected_source_start_sequence(detail))
+        .flatten();
     detail.transcript.apply_snapshot(snapshot);
     detail.view.cache_dirty = true;
     if detail.view.follow {
-        detail.view.selection = detail.transcript.len().saturating_sub(1);
+        detail.view.selection = detail
+            .transcript
+            .presentation_rows(detail.view.raw_debug)
+            .len()
+            .saturating_sub(1);
     } else {
         let added = detail.transcript.len().saturating_sub(old_len);
         if added > 0 {
             detail.view.footer = FooterState::NewBelow(added);
+        }
+        if let Some(start_sequence) = selected_source {
+            remap_selection(detail, start_sequence);
         }
     }
     if reset {
@@ -231,4 +255,70 @@ fn apply_snapshot(
     } else {
         Vec::new()
     }
+}
+
+fn selected_source_start_sequence(detail: &crate::app::model::SessionDetail) -> Option<i64> {
+    let entries = detail.transcript.entries();
+    let rows = detail.transcript.presentation_rows(detail.view.raw_debug);
+    let row = rows.get(detail.view.selection)?;
+    detail
+        .view
+        .selected_source_start_sequence
+        .filter(|start_sequence| row_contains_start_sequence(row, &entries, *start_sequence))
+        .or_else(|| {
+            entries
+                .get(row.first_entry_index())
+                .map(|entry| entry.start_sequence)
+        })
+}
+
+fn remap_selection(detail: &mut crate::app::model::SessionDetail, start_sequence: i64) {
+    let entries = detail.transcript.entries();
+    let rows = detail.transcript.presentation_rows(detail.view.raw_debug);
+    let selected = rows
+        .iter()
+        .position(|row| row_contains_start_sequence(row, &entries, start_sequence))
+        .or_else(|| {
+            rows.iter()
+                .enumerate()
+                .filter_map(|(index, row)| {
+                    row_start_sequences(row, &entries)
+                        .map(|sequence| sequence.abs_diff(start_sequence))
+                        .min()
+                        .map(|distance| (index, distance))
+                })
+                .min_by_key(|(_, distance)| *distance)
+                .map(|(index, _)| index)
+        });
+    if let Some(selection) = selected {
+        detail.view.selection = selection;
+        detail.view.selected_source_start_sequence = rows.get(selection).and_then(|row| {
+            row_start_sequences(row, &entries)
+                .min_by_key(|sequence| sequence.abs_diff(start_sequence))
+        });
+    } else {
+        detail.view.selection = 0;
+        detail.view.selected_source_start_sequence = None;
+    }
+}
+
+fn row_contains_start_sequence(
+    row: &PresentationRow,
+    entries: &[&compozy_client::types::Entry],
+    start_sequence: i64,
+) -> bool {
+    row_start_sequences(row, entries).any(|sequence| sequence == start_sequence)
+}
+
+fn row_start_sequences<'a>(
+    row: &'a PresentationRow,
+    entries: &'a [&'a compozy_client::types::Entry],
+) -> impl Iterator<Item = i64> + 'a {
+    let indexes: &[usize] = match row {
+        PresentationRow::Entry { entry_index } => std::slice::from_ref(entry_index),
+        PresentationRow::Group { entry_indexes, .. } => entry_indexes,
+    };
+    indexes
+        .iter()
+        .filter_map(|index| entries.get(*index).map(|entry| entry.start_sequence))
 }

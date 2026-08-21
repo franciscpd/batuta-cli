@@ -7,8 +7,8 @@ pub mod uds;
 use compozy_client::{
     Client, Error, TaskVerb,
     types::{
-        ApproveRequest, ClarifyAnswer, Decision, PromptMode, PromptOutcome, PromptRequest,
-        PromptRuntime,
+        AddWorkspaceOutcome, AddWorkspaceRequest, ApproveRequest, ClarifyAnswer, Decision,
+        PromptMode, PromptOutcome, PromptRequest, PromptRuntime,
     },
 };
 use serde_json::{Value, json};
@@ -23,6 +23,65 @@ const SESSION: &str = "sess_1";
 
 fn client(server: &MockServer) -> Client {
     Client::tcp(server.address().to_string())
+}
+
+#[tokio::test]
+async fn it_704_add_workspace_sends_generic_request_and_decodes_workspace() {
+    let server = mock_json(
+        "/api/workspaces",
+        201,
+        r#"{"id":"ws_added","name":"project","root_dir":"/work/project"}"#,
+    )
+    .await;
+    let outcome = client(&server)
+        .add_workspace(&AddWorkspaceRequest {
+            name: "project".to_owned(),
+            root_dir: "/work/project".to_owned(),
+        })
+        .await
+        .expect("add workspace");
+    assert!(matches!(
+        outcome,
+        AddWorkspaceOutcome::Added(workspace)
+            if workspace.id == "ws_added" && workspace.root_dir == "/work/project"
+    ));
+    let requests = server.received_requests().await.expect("requests");
+    assert_eq!(requests.len(), 1);
+    assert_eq!(
+        serde_json::from_slice::<Value>(&requests[0].body).expect("JSON body"),
+        json!({"name":"project","root_dir":"/work/project"})
+    );
+}
+
+#[tokio::test]
+async fn it_705_add_workspace_maps_unavailable_operation_to_unsupported() {
+    for status in [404, 405] {
+        let server = mock_json("/api/workspaces", status, r#"{"error":"not available"}"#).await;
+        assert!(matches!(
+            client(&server)
+                .add_workspace(&AddWorkspaceRequest {
+                    name: "project".to_owned(),
+                    root_dir: "/work/project".to_owned(),
+                })
+                .await,
+            Ok(AddWorkspaceOutcome::Unsupported)
+        ));
+    }
+    let server = mock_json(
+        "/api/workspaces",
+        501,
+        r#"{"error":"not available","code":"workspace.registration.unsupported"}"#,
+    )
+    .await;
+    assert!(matches!(
+        client(&server)
+            .add_workspace(&AddWorkspaceRequest {
+                name: "project".to_owned(),
+                root_dir: "/work/project".to_owned(),
+            })
+            .await,
+        Ok(AddWorkspaceOutcome::Unsupported)
+    ));
 }
 
 async fn mock_json(path_value: &str, status: u16, body: impl Into<String>) -> MockServer {

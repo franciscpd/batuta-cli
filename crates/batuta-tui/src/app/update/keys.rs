@@ -313,7 +313,8 @@ fn detail_key(model: &mut Model, key: KeyEvent) -> Vec<Cmd> {
     let Some(detail) = model.session_detail_mut() else {
         return Vec::new();
     };
-    let len = detail.transcript.len();
+    let rows = detail.transcript.presentation_rows(detail.view.raw_debug);
+    let len = rows.len();
     match key.code {
         KeyCode::Char('j') | KeyCode::Down => {
             if len > 0 {
@@ -338,12 +339,55 @@ fn detail_key(model: &mut Model, key: KeyEvent) -> Vec<Cmd> {
             detail.view.reasoning_expanded = !detail.view.reasoning_expanded;
             detail.view.cache_dirty = true;
         }
+        KeyCode::Char('D') => {
+            let entries = detail.transcript.entries();
+            let selected_row_start_sequence = rows
+                .get(detail.view.selection)
+                .and_then(|row| entries.get(row.first_entry_index()))
+                .map(|entry| entry.start_sequence);
+            let row_contains_start_sequence =
+                |row: &crate::transcript::PresentationRow, start_sequence| match row {
+                    crate::transcript::PresentationRow::Entry { entry_index } => entries
+                        .get(*entry_index)
+                        .is_some_and(|entry| entry.start_sequence == start_sequence),
+                    crate::transcript::PresentationRow::Group { entry_indexes, .. } => {
+                        entry_indexes.iter().any(|entry_index| {
+                            entries
+                                .get(*entry_index)
+                                .is_some_and(|entry| entry.start_sequence == start_sequence)
+                        })
+                    }
+                };
+            let selected_start_sequence = detail
+                .view
+                .selected_source_start_sequence
+                .filter(|start_sequence| {
+                    rows.get(detail.view.selection)
+                        .is_some_and(|row| row_contains_start_sequence(row, *start_sequence))
+                })
+                .or(selected_row_start_sequence);
+            detail.view.selected_source_start_sequence = selected_start_sequence;
+            detail.view.raw_debug = !detail.view.raw_debug;
+            let rows = detail.transcript.presentation_rows(detail.view.raw_debug);
+            detail.view.selection = selected_start_sequence
+                .and_then(|start_sequence| {
+                    rows.iter()
+                        .position(|row| row_contains_start_sequence(row, start_sequence))
+                })
+                .unwrap_or_else(|| detail.view.selection.min(rows.len().saturating_sub(1)));
+            detail.view.cache_dirty = true;
+        }
         KeyCode::Char('i') => detail.composer.focused = true,
         KeyCode::Enter => {
-            if let Some(entry) = detail
-                .transcript
-                .entries()
-                .get(detail.view.selection)
+            let selected_start = rows.get(detail.view.selection).and_then(|row| {
+                detail
+                    .transcript
+                    .entries()
+                    .get(row.first_entry_index())
+                    .map(|entry| entry.start_sequence)
+            });
+            if let Some(entry) = selected_start
+                .and_then(|start_sequence| detail.transcript.entry(start_sequence))
                 .filter(|entry| entry_has_expandable_part(entry))
             {
                 if !detail.view.expanded.remove(&entry.start_sequence) {
@@ -442,6 +486,9 @@ fn overlay_key(model: &mut Model, key: KeyEvent) -> Vec<Cmd> {
     if matches!(model.overlay, Some(Overlay::WorkspacePicker { .. })) {
         return super::picker::key(model, key);
     }
+    if matches!(model.overlay, Some(Overlay::WorkspaceOnboarding { .. })) {
+        return onboarding_key(model, key);
+    }
     match &mut model.overlay {
         Some(Overlay::Help { scroll }) => match key.code {
             KeyCode::Esc | KeyCode::Char('?') => model.overlay = None,
@@ -449,11 +496,76 @@ fn overlay_key(model: &mut Model, key: KeyEvent) -> Vec<Cmd> {
             KeyCode::Char('k') | KeyCode::Up => *scroll = scroll.saturating_sub(1),
             _ => return Vec::new(),
         },
-        Some(Overlay::Clarify { .. }) => return Vec::new(),
+        Some(Overlay::Clarify { .. } | Overlay::WorkspaceOnboarding { .. }) => return Vec::new(),
         _ => return Vec::new(),
     }
     model.dirty = true;
     Vec::new()
+}
+
+fn onboarding_key(model: &mut Model, key: KeyEvent) -> Vec<Cmd> {
+    let Some(Overlay::WorkspaceOnboarding {
+        candidate,
+        confirming,
+        adding,
+        booting,
+        refresh_required,
+        registration_complete,
+        registration_unsupported,
+        message,
+        details_expanded,
+        ..
+    }) = &mut model.overlay
+    else {
+        return Vec::new();
+    };
+    if *adding || *booting {
+        return Vec::new();
+    }
+    if (*refresh_required || *registration_complete)
+        && !matches!(key.code, KeyCode::Char('w' | 'q' | 'r') | KeyCode::Esc)
+    {
+        return Vec::new();
+    }
+    match key.code {
+        KeyCode::Char('w') => super::picker::open(model, false),
+        KeyCode::Char('q') => quit(model),
+        KeyCode::Char('r') => {
+            if !*registration_unsupported {
+                *message = Some("refreshing workspace catalog…".into());
+            }
+            let request = model.allocate(|id| Request::Workspaces { id });
+            model.dirty = true;
+            vec![Cmd::Get(request)]
+        }
+        KeyCode::Esc if *confirming => {
+            *confirming = false;
+            model.dirty = true;
+            Vec::new()
+        }
+        KeyCode::Char('a') if !*confirming => {
+            *confirming = true;
+            *message = None;
+            *details_expanded = false;
+            model.dirty = true;
+            Vec::new()
+        }
+        KeyCode::Char('d') => {
+            *details_expanded = !*details_expanded;
+            model.dirty = true;
+            Vec::new()
+        }
+        KeyCode::Enter if *confirming => {
+            *adding = true;
+            *message = None;
+            let name = candidate.name.clone();
+            let root_dir = candidate.root_dir.clone();
+            let request = model.allocate(|id| Request::AddWorkspace { id, name, root_dir });
+            model.dirty = true;
+            vec![Cmd::Post(request)]
+        }
+        _ => Vec::new(),
+    }
 }
 
 fn chooser_or_confirm(model: &Model) -> bool {

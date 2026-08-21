@@ -190,6 +190,7 @@ pub(crate) fn response_error(
             message: payload.error,
             code: payload.code,
             details: payload.details,
+            diagnostic: payload.diagnostic,
         },
         Err(source) => Error::Decode { context, source },
     }

@@ -152,6 +152,7 @@ fn ut_010_catalog_503_falls_through_to_generic_stream_handling() {
                 message: "daemon draining".into(),
                 code: None,
                 details: None,
+                diagnostic: None,
             })),
         },
     );

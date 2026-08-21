@@ -1,4 +1,4 @@
-use crate::{cli::Cli, exit::AppError, probe, version, workspace};
+use crate::{cli::Cli, config::Settings, exit::AppError, probe, version, workspace};
 use compozy_client::{
     SessionQuery,
     types::{Session, SessionPage, Workspace},
@@ -7,7 +7,12 @@ use serde::Serialize;
 use time::OffsetDateTime;
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
-pub async fn run(cli: &Cli, all_agents: bool, limit: i64) -> Result<(), AppError> {
+pub async fn run(
+    cli: &Cli,
+    settings: &Settings,
+    all_agents: bool,
+    limit: i64,
+) -> Result<(), AppError> {
     validate_limit(limit)?;
     let (report, client) = probe(cli).await;
     let Some(client) = client else {
@@ -29,7 +34,18 @@ pub async fn run(cli: &Cli, all_agents: bool, limit: i64) -> Result<(), AppError
     let warnings = version::check(status.daemon.version.as_deref())
         .into_iter()
         .collect::<Vec<_>>();
-    let workspace = workspace::resolve_from_daemon(&client, cli.workspace.as_deref()).await?;
+    let workspace = match workspace::resolve_from_daemon_with_source(
+        &client,
+        settings.workspace.as_deref(),
+        settings.workspace_source,
+    )
+    .await?
+    {
+        workspace::WorkspaceResolution::Selected(workspace) => workspace,
+        workspace::WorkspaceResolution::Unresolved(candidate) => {
+            return Err(workspace::no_workspace(&candidate.canonical_path));
+        }
+    };
     let page = client
         .sessions(&SessionQuery {
             workspace: &workspace.id,

@@ -14,10 +14,10 @@ beginning of transcript
   - ler contrato
   - implementar▍
   ▸ reasoning (14 lines)
-  ✓ mcp__compozy-hosted-tools__compozy__config_get
+  ✓ completed mcp__compozy-hosted-tools__compozy__config_get
   loops.inputs.batuta-deliver.auto_commit
-  ✗ mcp__compozy-hosted-tools__compozy__provider_models_list
-  ▶ Task   Track A: daemon API facts
+  × failed mcp__compozy-hosted-tools__compozy__provider_models_list
+  ▶ tool Task   Track A: daemon API facts
   ─ prompt_accepted · turn accepted ─
   ! file_mutation_unverified · executor edited files without verification
   ▪ approval  request req_3f9c  turn turn-073fb634a25a1f32
@@ -25,4 +25,4 @@ beginning of transcript
     a allow once · x reject once
   file: report.txt (text/plain)
 ────────────────────────────────────────────────────────────────────────────────
-j/k move  Enter expand  t reasoning  G newest  g oldest  q quit             live
+j/k move  Enter expand  t reasoning  D raw debug  G newest  g oldest  q qu  live

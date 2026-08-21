@@ -1,5 +1,5 @@
 use batuta_tui::{
-    app::{AppMode, Model, Overlay, Panel, Settings},
+    app::{AppMode, AttentionItem, Model, Overlay, Panel, RunRow, Settings},
     msg::Msg,
     update,
     views::{
@@ -49,4 +49,63 @@ fn ut_433_resize_closes_overlay_and_preserves_panels() {
     assert!(model.overlay.is_none());
     update(&mut model, Msg::Resize(100, 30));
     assert_eq!(model.focus, Panel::Runs);
+}
+
+#[test]
+fn compact_layout_allocates_content_to_only_the_focused_panel() {
+    let mut model = Model::new(Settings::default(), AppMode::Full);
+    let content = layout::areas(ratatui::layout::Rect::new(0, 0, 90, 30), &model);
+    assert_eq!(content.sessions.width, 90);
+    assert_eq!(content.detail.width, 0);
+
+    model.focus = Panel::Detail;
+    let content = layout::areas(ratatui::layout::Rect::new(0, 0, 90, 30), &model);
+    assert_eq!(content.sessions.width, 0);
+    assert_eq!(content.runs.width, 0);
+    assert_eq!(content.attention.width, 0);
+    assert_eq!(content.detail.width, 90);
+}
+
+#[test]
+fn medium_layout_grows_only_the_highest_relevance_contextual_panel() {
+    let mut model = Model::new(Settings::default(), AppMode::Full);
+    model.focus = Panel::Detail;
+    model.runs.items.push(RunRow {
+        status: "running".into(),
+        ..RunRow::default()
+    });
+
+    let areas = layout::areas(ratatui::layout::Rect::new(0, 0, 120, 40), &model);
+    assert!(areas.runs.height > 3);
+    assert_eq!(areas.sessions.height, 3);
+    assert_eq!(areas.attention.height, 3);
+    assert_eq!(areas.detail.width, 72);
+
+    model.attention.push(AttentionItem::default());
+    let areas = layout::areas(ratatui::layout::Rect::new(0, 0, 120, 40), &model);
+    assert!(areas.attention.height > 3);
+    assert_eq!(areas.sessions.height, 3);
+    assert_eq!(areas.runs.height, 3);
+}
+
+#[test]
+fn wide_layout_compacts_empty_panels_and_distributes_relevance() {
+    let mut model = Model::new(Settings::default(), AppMode::Full);
+    model.focus = Panel::Detail;
+    let areas = layout::areas(ratatui::layout::Rect::new(0, 0, 180, 50), &model);
+    assert_eq!(areas.sessions.height, 3);
+    assert_eq!(areas.runs.height, 3);
+    assert_eq!(areas.attention.height, 3);
+    assert!(areas.detail.width * 100 >= 60 * 180);
+
+    model.sessions.items.push(Default::default());
+    model.runs.items.push(RunRow {
+        status: "running".into(),
+        ..RunRow::default()
+    });
+    model.attention.push(AttentionItem::default());
+    let areas = layout::areas(ratatui::layout::Rect::new(0, 0, 180, 50), &model);
+    assert!(areas.sessions.height > 3);
+    assert!(areas.runs.height > areas.sessions.height);
+    assert!(areas.attention.height > areas.runs.height);
 }

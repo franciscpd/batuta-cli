@@ -9,7 +9,10 @@ use batuta_tui::{
 };
 use compozy_client::{
     RunControl, StreamEvent, TranscriptEvent,
-    types::{ApproveRequest, CatalogEvent, ClarifyAnswer, Decision, Session, TranscriptSnapshot},
+    types::{
+        ApproveRequest, CatalogEvent, ClarifyAnswer, Decision, Session, TranscriptDelta,
+        TranscriptSnapshot,
+    },
 };
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use panels_support::{fail, key, model, render, respond, session_page, sessions_request};
@@ -127,6 +130,104 @@ fn ut_553_footer_states_have_exact_copy() {
         model.session_detail_mut().unwrap().view.footer = state;
         assert!(render(&model, 100, 30).contains(text));
     }
+}
+
+#[test]
+fn ut_717_off_tail_deltas_preserve_the_anchor_and_count_raw_updates() {
+    let mut model = detail_model("active", false);
+    let snapshot: TranscriptSnapshot = serde_json::from_value(serde_json::json!({
+        "epoch": 1,
+        "generation": 1,
+        "max_sequence": 2,
+        "entries": [
+            {"start_sequence": 1, "sequence": 1, "message": {"id": "tool-1", "role": "assistant", "parts": [{"type": "tool", "name": "read", "state": "running"}]}},
+            {"start_sequence": 2, "sequence": 2, "message": {"id": "tool-2", "role": "assistant", "parts": [{"type": "tool", "name": "read", "state": "running"}]}}
+        ]
+    }))
+    .unwrap();
+    update(
+        &mut model,
+        Msg::Stream {
+            id: StreamId::Transcript("sess-a".into()),
+            event: AnyStreamEvent::Transcript(TranscriptEvent::Snapshot(snapshot)),
+        },
+    );
+    let detail = model.session_detail_mut().unwrap();
+    detail.view.follow = false;
+    detail.view.selection = 0;
+
+    let delta: TranscriptDelta = serde_json::from_value(serde_json::json!({
+        "epoch": 1,
+        "generation": 1,
+        "cursor": 4,
+        "max_sequence": 4,
+        "entries": [
+            {"start_sequence": 1, "sequence": 3, "message": {"id": "tool-1", "role": "assistant", "parts": [{"type": "tool", "name": "read", "state": "completed"}]}},
+            {"start_sequence": 2, "sequence": 4, "message": {"id": "tool-2", "role": "assistant", "parts": [{"type": "tool", "name": "read", "state": "completed"}]}}
+        ]
+    }))
+    .unwrap();
+    update(
+        &mut model,
+        Msg::Stream {
+            id: StreamId::Transcript("sess-a".into()),
+            event: AnyStreamEvent::Transcript(TranscriptEvent::Delta(delta)),
+        },
+    );
+
+    let detail = model.session_detail().unwrap();
+    assert_eq!(detail.view.selection, 0);
+    assert_eq!(detail.view.footer, FooterState::NewBelow(2));
+}
+
+#[test]
+fn ut_717_reset_off_tail_remaps_to_the_selected_source() {
+    let mut model = detail_model("active", false);
+    let snapshot: TranscriptSnapshot = serde_json::from_value(serde_json::json!({
+        "epoch": 1,
+        "generation": 1,
+        "max_sequence": 3,
+        "entries": [
+            {"start_sequence": 1, "sequence": 1, "message": {"id": "one", "role": "assistant", "parts": [{"type": "text", "text": "one"}]}},
+            {"start_sequence": 2, "sequence": 2, "message": {"id": "two", "role": "assistant", "parts": [{"type": "text", "text": "two"}]}},
+            {"start_sequence": 3, "sequence": 3, "message": {"id": "three", "role": "assistant", "parts": [{"type": "text", "text": "three"}]}}
+        ]
+    }))
+    .unwrap();
+    update(
+        &mut model,
+        Msg::Stream {
+            id: StreamId::Transcript("sess-a".into()),
+            event: AnyStreamEvent::Transcript(TranscriptEvent::Snapshot(snapshot)),
+        },
+    );
+    let detail = model.session_detail_mut().unwrap();
+    detail.view.follow = false;
+    detail.view.selection = 1;
+
+    let reset: TranscriptSnapshot = serde_json::from_value(serde_json::json!({
+        "epoch": 1,
+        "generation": 2,
+        "max_sequence": 3,
+        "reset": true,
+        "entries": [
+            {"start_sequence": 2, "sequence": 2, "message": {"id": "two", "role": "assistant", "parts": [{"type": "text", "text": "two"}]}},
+            {"start_sequence": 3, "sequence": 3, "message": {"id": "three", "role": "assistant", "parts": [{"type": "text", "text": "three"}]}}
+        ]
+    }))
+    .unwrap();
+    update(
+        &mut model,
+        Msg::Stream {
+            id: StreamId::Transcript("sess-a".into()),
+            event: AnyStreamEvent::Transcript(TranscriptEvent::Snapshot(reset)),
+        },
+    );
+
+    let detail = model.session_detail().unwrap();
+    assert!(!detail.view.follow);
+    assert_eq!(detail.view.selection, 0);
+    assert_eq!(detail.view.selected_source_start_sequence, Some(2));
 }
 
 #[test]

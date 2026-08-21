@@ -1,7 +1,7 @@
 use crate::{
     app::composer::ComposerState,
     cmd::{Cmd, LogScope, Request, RequestId, StreamId, TimerId},
-    theme::Theme,
+    theme::{Theme, ThemeVariant},
     transcript::TranscriptState,
 };
 use compozy_client::types::{
@@ -47,6 +47,24 @@ pub enum ColorMode {
     Never,
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ThemeMode {
+    #[default]
+    Auto,
+    Dark,
+    Light,
+}
+
+impl From<ThemeMode> for ThemeVariant {
+    fn from(value: ThemeMode) -> Self {
+        match value {
+            ThemeMode::Auto => Self::Auto,
+            ThemeMode::Dark => Self::Dark,
+            ThemeMode::Light => Self::Light,
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Preset {
     pub agent: String,
@@ -68,6 +86,7 @@ impl Default for Preset {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct UiSettings {
     pub color: ColorMode,
+    pub theme: ThemeMode,
     pub fps: u16,
     pub sessions_limit: u64,
     pub runs_limit: u64,
@@ -76,6 +95,7 @@ impl Default for UiSettings {
     fn default() -> Self {
         Self {
             color: ColorMode::Auto,
+            theme: ThemeMode::Auto,
             fps: 30,
             sessions_limit: 50,
             runs_limit: 50,
@@ -86,6 +106,12 @@ impl Default for UiSettings {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct WorkspaceRef {
     pub id: String,
+    pub name: String,
+    pub root_dir: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WorkspaceCandidate {
     pub name: String,
     pub root_dir: String,
 }
@@ -236,7 +262,9 @@ pub enum StreamStatus {
 #[derive(Clone, Debug, Default)]
 pub struct TranscriptView {
     pub selection: usize,
+    pub selected_source_start_sequence: Option<i64>,
     pub reasoning_expanded: bool,
+    pub raw_debug: bool,
     pub expanded: BTreeSet<i64>,
     pub follow: bool,
     pub footer: FooterState,
@@ -255,8 +283,33 @@ pub struct RenderCacheKey {
     pub sequence: i64,
     pub width: u16,
     pub reasoning_expanded: bool,
+    pub raw_debug: bool,
     pub expanded: bool,
     pub color: bool,
+    pub theme: ThemeVariant,
+}
+
+impl RenderCacheKey {
+    pub fn for_entry(
+        entry: &compozy_client::types::Entry,
+        width: u16,
+        reasoning_expanded: bool,
+        raw_debug: bool,
+        expanded: bool,
+        color: bool,
+        theme: ThemeVariant,
+    ) -> Self {
+        Self {
+            start_sequence: entry.start_sequence,
+            sequence: entry.sequence,
+            width,
+            reasoning_expanded,
+            raw_debug,
+            expanded,
+            color,
+            theme,
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -276,6 +329,7 @@ impl SessionDetail {
             session,
             transcript: TranscriptState::default(),
             view: TranscriptView {
+                selected_source_start_sequence: None,
                 follow: true,
                 fetching: true,
                 stopped,
@@ -345,6 +399,18 @@ pub enum Overlay {
         items: Vec<WorkspaceRef>,
         at_start: bool,
     },
+    WorkspaceOnboarding {
+        candidate: WorkspaceCandidate,
+        confirming: bool,
+        adding: bool,
+        booting: bool,
+        refresh_required: bool,
+        registration_complete: bool,
+        registration_unsupported: bool,
+        message: Option<String>,
+        technical_details: Option<String>,
+        details_expanded: bool,
+    },
     Clarify {
         session_id: String,
         request_id: String,
@@ -410,6 +476,8 @@ pub struct Model {
     pub mode: AppMode,
     pub settings: Settings,
     pub workspace: Option<WorkspaceRef>,
+    pub startup_candidate: Option<WorkspaceCandidate>,
+    pub startup_boot_pending: BTreeSet<RequestId>,
     pub focus: Panel,
     pub sessions: ListState<SessionRow>,
     pub runs: ListState<RunRow>,
@@ -457,10 +525,13 @@ impl Model {
     pub fn new(settings: Settings, mode: AppMode) -> Self {
         let workspace = settings.workspace.clone();
         let color = settings.ui.color != ColorMode::Never;
+        let theme_mode = settings.ui.theme;
         Self {
             mode,
             settings,
             workspace,
+            startup_candidate: None,
+            startup_boot_pending: BTreeSet::new(),
             focus: if mode == AppMode::TailOnly {
                 Panel::Detail
             } else {
@@ -507,7 +578,11 @@ impl Model {
             active_streams: HashSet::new(),
             stream_status: HashMap::new(),
             stream_cursors: HashMap::new(),
-            theme: Theme::new(color),
+            theme: Theme::with_variant(
+                color,
+                theme_mode.into(),
+                std::env::var("COLORFGBG").ok().as_deref(),
+            ),
             quit_guard: false,
             last_list_focus: Panel::Sessions,
             next_request: 1,
@@ -538,6 +613,22 @@ impl Model {
         model.detail = Detail::Session(Box::new(detail));
         model
     }
+    pub fn start_workspace_onboarding(&mut self, candidate: WorkspaceCandidate) {
+        self.startup_candidate = Some(candidate.clone());
+        self.overlay = Some(Overlay::WorkspaceOnboarding {
+            candidate,
+            confirming: false,
+            adding: false,
+            booting: false,
+            refresh_required: false,
+            registration_complete: false,
+            registration_unsupported: false,
+            message: None,
+            technical_details: None,
+            details_expanded: false,
+        });
+        self.dirty = true;
+    }
     pub fn allocate(&mut self, make: impl FnOnce(RequestId) -> Request) -> Request {
         let id = RequestId(self.next_request);
         self.next_request += 1;
@@ -545,6 +636,38 @@ impl Model {
         self.pending
             .insert(id, PendingKind::Request(request.clone()));
         request
+    }
+    pub fn complete_workspace_boot(&mut self, id: RequestId) {
+        if self.startup_boot_pending.remove(&id) && self.startup_boot_pending.is_empty() {
+            self.startup_candidate = None;
+            self.overlay = None;
+            self.dirty = true;
+        }
+    }
+    pub fn fail_workspace_boot(&mut self, id: RequestId, error: String) -> Option<Vec<Cmd>> {
+        if !self.startup_boot_pending.remove(&id) {
+            return None;
+        }
+        for id in std::mem::take(&mut self.startup_boot_pending) {
+            self.pending.remove(&id);
+        }
+        let candidate = self.startup_candidate.clone()?;
+        self.overlay = Some(Overlay::WorkspaceOnboarding {
+            candidate,
+            confirming: false,
+            adding: false,
+            booting: false,
+            refresh_required: false,
+            registration_complete: true,
+            registration_unsupported: false,
+            message: Some(format!("workspace selected; startup failed: {error}")),
+            technical_details: None,
+            details_expanded: false,
+        });
+        let commands = self.all_stop_cmds();
+        self.active_streams.clear();
+        self.dirty = true;
+        Some(commands)
     }
     pub fn message_ids(&mut self) -> (String, String) {
         let value = self.next_message;
@@ -565,6 +688,9 @@ impl Model {
                     Cmd::Render,
                 ];
             }
+            return vec![Cmd::Render];
+        }
+        if self.startup_candidate.is_some() {
             return vec![Cmd::Render];
         }
         let Some(workspace) = self.workspace.clone() else {
@@ -717,9 +843,48 @@ pub fn page_into_detail(detail: &mut SessionDetail, page: TranscriptPage) {
     let has_older = page.has_older;
     detail.transcript.prepend_page(page);
     if was_empty {
-        detail.view.selection = detail.transcript.len().saturating_sub(1);
+        detail.view.selection = detail
+            .transcript
+            .presentation_rows(detail.view.raw_debug)
+            .len()
+            .saturating_sub(1);
     }
     detail.view.fetching = false;
     detail.view.beginning = !has_older;
     detail.view.cache_dirty = true;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{SessionDetail, page_into_detail};
+    use compozy_client::types::{Session, TranscriptPage};
+
+    #[test]
+    fn initial_page_selection_uses_grouped_presentation_rows() {
+        let mut detail = SessionDetail::new(Session::default());
+        let page: TranscriptPage = serde_json::from_value(serde_json::json!({
+            "entries": (1..=6).map(|sequence| serde_json::json!({
+                "message": {
+                    "id": format!("message-{sequence}"),
+                    "role": "assistant",
+                    "parts": [{
+                        "type": "tool-test",
+                        "state": "completed",
+                        "name": "test"
+                    }]
+                },
+                "start_sequence": sequence,
+                "sequence": sequence
+            })).collect::<Vec<_>>(),
+            "epoch": 1,
+            "generation": 1,
+            "max_sequence": 6
+        }))
+        .unwrap();
+
+        page_into_detail(&mut detail, page);
+
+        assert_eq!(detail.transcript.presentation_rows(false).len(), 1);
+        assert_eq!(detail.view.selection, 0);
+    }
 }

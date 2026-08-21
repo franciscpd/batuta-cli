@@ -8,10 +8,10 @@ use batuta_tui::{
 };
 use compozy_client::{
     RunControl,
-    types::{LoopMutation, Workspace},
+    types::{AddWorkspaceOutcome, LoopMutation, Workspace},
 };
 use crossterm::event::KeyCode;
-use panels_support::{key, model, render, respond};
+use panels_support::{fail, key, model, render, respond, runs_page, session_page};
 
 fn workspaces() -> Vec<Workspace> {
     vec![
@@ -203,4 +203,632 @@ fn ut_625_late_post_result_is_ignored_except_success_toast_once() {
         },
     );
     assert!(model.toast.is_none());
+}
+
+#[test]
+fn ut_729_confirmed_onboarding_is_the_only_registration_write_and_boots_after_refetch() {
+    let mut model = batuta_tui::Model::new(
+        Settings {
+            workspace: None,
+            ..Settings::default()
+        },
+        AppMode::Full,
+    );
+    model.start_workspace_onboarding(batuta_tui::app::WorkspaceCandidate {
+        name: "new-workspace".into(),
+        root_dir: "/tmp/new-workspace".into(),
+    });
+
+    assert!(update(&mut model, key(KeyCode::Char('a'))).is_empty());
+    assert!(update(&mut model, key(KeyCode::Esc)).is_empty());
+    assert!(model.pending.is_empty());
+
+    update(&mut model, key(KeyCode::Char('a')));
+    let add = update(&mut model, key(KeyCode::Enter))
+        .into_iter()
+        .find_map(|cmd| match cmd {
+            Cmd::Post(request @ Request::AddWorkspace { .. }) => Some(request),
+            _ => None,
+        })
+        .expect("confirmation writes once");
+    let refetch = update(
+        &mut model,
+        Msg::Api {
+            request: add.id(),
+            result: Ok(ApiResponse::WorkspaceAdded(AddWorkspaceOutcome::Added(
+                Workspace::default(),
+            ))),
+        },
+    )
+    .into_iter()
+    .find_map(|cmd| match cmd {
+        Cmd::Get(request @ Request::Workspaces { .. }) => Some(request),
+        _ => None,
+    })
+    .expect("successful registration refetches catalog");
+    let boot_commands = respond(
+        &mut model,
+        refetch,
+        ApiResponse::Workspaces(vec![Workspace {
+            id: "ws-new".into(),
+            name: "new-workspace".into(),
+            root_dir: "/tmp/new-workspace".into(),
+            ..Workspace::default()
+        }]),
+    );
+    let sessions = boot_commands
+        .iter()
+        .find_map(|cmd| match cmd {
+            Cmd::Get(request @ Request::Sessions { .. }) => Some(request.clone()),
+            _ => None,
+        })
+        .expect("normal boot requests sessions");
+    let runs = boot_commands
+        .iter()
+        .find_map(|cmd| match cmd {
+            Cmd::Get(request @ Request::Runs { .. }) => Some(request.clone()),
+            _ => None,
+        })
+        .expect("normal boot requests runs");
+    let overview_request = boot_commands
+        .iter()
+        .find_map(|cmd| match cmd {
+            Cmd::Get(request @ Request::Overview { .. }) => Some(request.clone()),
+            _ => None,
+        })
+        .expect("normal boot requests overview");
+    assert_eq!(
+        model
+            .workspace
+            .as_ref()
+            .map(|workspace| workspace.id.as_str()),
+        Some("ws-new")
+    );
+    assert!(matches!(
+        model.overlay,
+        Some(Overlay::WorkspaceOnboarding { booting: true, .. })
+    ));
+    respond(
+        &mut model,
+        sessions,
+        ApiResponse::Sessions(Box::new(session_page())),
+    );
+    assert!(model.overlay.is_some());
+    respond(
+        &mut model,
+        runs,
+        ApiResponse::Runs(Box::new(runs_page(false))),
+    );
+    assert!(model.overlay.is_some());
+    let overview = serde_json::from_value(serde_json::json!({
+        "attention": {"total": 0, "by_kind": {}, "items": []}
+    }))
+    .expect("empty overview");
+    respond(
+        &mut model,
+        overview_request,
+        ApiResponse::Overview(Box::new(overview)),
+    );
+    assert!(model.overlay.is_none());
+}
+
+#[test]
+fn ut_730_onboarding_remains_open_until_normal_boot_succeeds() {
+    let mut model = batuta_tui::Model::new(
+        Settings {
+            workspace: None,
+            ..Settings::default()
+        },
+        AppMode::Full,
+    );
+    model.start_workspace_onboarding(batuta_tui::app::WorkspaceCandidate {
+        name: "new-workspace".into(),
+        root_dir: "/tmp/new-workspace".into(),
+    });
+
+    update(&mut model, key(KeyCode::Char('a')));
+    let add = update(&mut model, key(KeyCode::Enter))
+        .into_iter()
+        .find_map(|cmd| match cmd {
+            Cmd::Post(request @ Request::AddWorkspace { .. }) => Some(request),
+            _ => None,
+        })
+        .expect("confirmation writes once");
+    let refetch = update(
+        &mut model,
+        Msg::Api {
+            request: add.id(),
+            result: Ok(ApiResponse::WorkspaceAdded(AddWorkspaceOutcome::Added(
+                Workspace::default(),
+            ))),
+        },
+    )
+    .into_iter()
+    .find_map(|cmd| match cmd {
+        Cmd::Get(request @ Request::Workspaces { .. }) => Some(request),
+        _ => None,
+    })
+    .expect("successful registration refetches catalog");
+    let commands = respond(
+        &mut model,
+        refetch,
+        ApiResponse::Workspaces(vec![Workspace {
+            id: "ws-new".into(),
+            name: "new-workspace".into(),
+            root_dir: "/tmp/new-workspace".into(),
+            ..Workspace::default()
+        }]),
+    );
+    let sessions = commands
+        .iter()
+        .find_map(|cmd| match cmd {
+            Cmd::Get(request @ Request::Sessions { .. }) => Some(request.clone()),
+            _ => None,
+        })
+        .expect("normal boot requests sessions");
+    assert!(matches!(
+        model.overlay,
+        Some(Overlay::WorkspaceOnboarding { booting: true, .. })
+    ));
+
+    fail(&mut model, sessions, "service unavailable");
+    assert!(matches!(
+        model.overlay,
+        Some(Overlay::WorkspaceOnboarding {
+            booting: false,
+            message: Some(ref message),
+            ..
+        }) if message == "workspace selected; startup failed: service unavailable"
+    ));
+    assert!(update(&mut model, key(KeyCode::Char('a'))).is_empty());
+    assert!(update(&mut model, key(KeyCode::Enter)).is_empty());
+}
+
+#[test]
+fn ut_731_onboarding_selects_a_catalog_root_with_a_noncanonical_spelling() {
+    let mut model = batuta_tui::Model::new(
+        Settings {
+            workspace: None,
+            ..Settings::default()
+        },
+        AppMode::Full,
+    );
+    let root = std::env::current_dir().unwrap();
+    model.start_workspace_onboarding(batuta_tui::app::WorkspaceCandidate {
+        name: "batuta-cli".into(),
+        root_dir: root.display().to_string(),
+    });
+    let request = model.allocate(|id| Request::Workspaces { id });
+    let commands = respond(
+        &mut model,
+        request,
+        ApiResponse::Workspaces(vec![Workspace {
+            id: "ws-canonical".into(),
+            name: "batuta-cli".into(),
+            root_dir: root.join("src/..").display().to_string(),
+            ..Workspace::default()
+        }]),
+    );
+
+    assert_eq!(
+        model
+            .workspace
+            .as_ref()
+            .map(|workspace| workspace.id.as_str()),
+        Some("ws-canonical")
+    );
+    assert!(
+        commands
+            .iter()
+            .any(|command| matches!(command, Cmd::Get(Request::Sessions { .. })))
+    );
+}
+
+#[test]
+fn ut_732_unsupported_onboarding_shows_an_escaped_registration_command() {
+    let mut model = batuta_tui::Model::new(
+        Settings {
+            workspace: None,
+            ..Settings::default()
+        },
+        AppMode::Full,
+    );
+    model.start_workspace_onboarding(batuta_tui::app::WorkspaceCandidate {
+        name: "new workspace".into(),
+        root_dir: "/tmp/new workspace's root".into(),
+    });
+    let request = model.allocate(|id| Request::AddWorkspace {
+        id,
+        name: "new workspace".into(),
+        root_dir: "/tmp/new workspace's root".into(),
+    });
+    respond(
+        &mut model,
+        request,
+        ApiResponse::WorkspaceAdded(AddWorkspaceOutcome::Unsupported),
+    );
+
+    let Some(Overlay::WorkspaceOnboarding {
+        adding,
+        message: Some(message),
+        ..
+    }) = model.overlay
+    else {
+        panic!("expected onboarding message");
+    };
+    assert!(!adding);
+    assert_eq!(
+        message,
+        "This daemon cannot add workspaces through its API. Run: compozy workspace add '/tmp/new workspace'\"'\"'s root'"
+    );
+}
+
+#[test]
+fn it_712_unsupported_onboarding_blocks_further_registration_writes() {
+    let mut model = onboarding_model();
+    let add = confirm_add(&mut model);
+    respond(
+        &mut model,
+        add,
+        ApiResponse::WorkspaceAdded(AddWorkspaceOutcome::Unsupported),
+    );
+
+    assert!(update(&mut model, key(KeyCode::Char('a'))).is_empty());
+    assert!(update(&mut model, key(KeyCode::Enter)).is_empty());
+    assert!(matches!(
+        model.overlay,
+        Some(Overlay::WorkspaceOnboarding {
+            confirming: false,
+            registration_complete: true,
+            ..
+        })
+    ));
+}
+
+#[test]
+fn ut_731_unsupported_onboarding_preserves_the_fallback_after_an_empty_refresh() {
+    let mut model = onboarding_model();
+    let add = confirm_add(&mut model);
+    respond(
+        &mut model,
+        add,
+        ApiResponse::WorkspaceAdded(AddWorkspaceOutcome::Unsupported),
+    );
+
+    let refresh = update(&mut model, key(KeyCode::Char('r')))
+        .into_iter()
+        .find_map(|command| match command {
+            Cmd::Get(request @ Request::Workspaces { .. }) => Some(request),
+            _ => None,
+        })
+        .expect("unsupported onboarding refreshes the catalog read-only");
+    assert!(respond(&mut model, refresh, ApiResponse::Workspaces(Vec::new())).is_empty());
+
+    assert!(matches!(
+        model.overlay,
+        Some(Overlay::WorkspaceOnboarding {
+            registration_complete: true,
+            message: Some(ref message),
+            ..
+        }) if message == "This daemon cannot add workspaces through its API. Run: compozy workspace add /tmp/new-workspace"
+    ));
+    let screen = render(&model, 100, 30);
+    assert!(
+        screen.contains("workspace add /tmp/new-workspace"),
+        "{screen}"
+    );
+    assert!(!screen.contains("[a] add this directory"), "{screen}");
+}
+
+fn onboarding_model() -> batuta_tui::Model {
+    let mut model = batuta_tui::Model::new(
+        Settings {
+            workspace: None,
+            ..Settings::default()
+        },
+        AppMode::Full,
+    );
+    model.start_workspace_onboarding(batuta_tui::app::WorkspaceCandidate {
+        name: "new-workspace".into(),
+        root_dir: "/tmp/new-workspace".into(),
+    });
+    model
+}
+
+#[test]
+fn ut_733_onboarding_screens_match_the_workspace_contract() {
+    let mut model = onboarding_model();
+    let candidate = render(&model, 100, 30);
+    for text in [
+        "Workspace not registered",
+        "Name   new-workspace",
+        "Path   /tmp/new-workspace",
+        "[a] add this directory",
+        "[w] choose an existing workspace",
+        "[q] exit",
+    ] {
+        assert!(candidate.contains(text), "{candidate}");
+    }
+    insta::assert_snapshot!("onboarding_candidate_100x30", candidate);
+
+    update(&mut model, key(KeyCode::Char('a')));
+    let confirmation = render(&model, 100, 30);
+    for text in [
+        "Add workspace?",
+        "This registers the directory with the connected daemon.",
+        "Enter confirm",
+        "Esc cancel",
+    ] {
+        assert!(confirmation.contains(text), "{confirmation}");
+    }
+    insta::assert_snapshot!("onboarding_confirmation_100x30", confirmation);
+
+    let add = confirm_add(&mut model);
+    let progress = render(&model, 100, 30);
+    assert!(progress.contains("… adding workspace"), "{progress}");
+    insta::assert_snapshot!("onboarding_progress_100x30", progress);
+
+    respond(
+        &mut model,
+        add,
+        ApiResponse::WorkspaceAdded(AddWorkspaceOutcome::Unsupported),
+    );
+    let unsupported = render(&model, 100, 30);
+    for text in [
+        "This daemon cannot add workspaces through its API.",
+        "[r] refresh",
+        "[w] choose an existing workspace",
+        "[q] exit",
+    ] {
+        assert!(unsupported.contains(text), "{unsupported}");
+    }
+    insta::assert_snapshot!("onboarding_unsupported_100x30", unsupported);
+
+    let mut failure = onboarding_model();
+    let add = confirm_add(&mut failure);
+    fail(&mut failure, add, "HTTP 422: invalid root");
+    let error = render(&failure, 100, 30);
+    for text in [
+        "registration failed — HTTP 422: invalid root",
+        "[r] refresh",
+        "[w] choose an existing workspace",
+        "[q] exit",
+    ] {
+        assert!(error.contains(text), "{error}");
+    }
+    insta::assert_snapshot!("onboarding_error_100x30", error);
+}
+
+fn confirm_add(model: &mut batuta_tui::Model) -> Request {
+    update(model, key(KeyCode::Char('a')));
+    update(model, key(KeyCode::Enter))
+        .into_iter()
+        .find_map(|command| match command {
+            Cmd::Post(request @ Request::AddWorkspace { .. }) => Some(request),
+            _ => None,
+        })
+        .expect("confirmed onboarding emits one add request")
+}
+
+#[test]
+fn it_703_onboarding_cancel_picker_and_exit_paths_emit_no_registration_write() {
+    let mut model = onboarding_model();
+    assert!(update(&mut model, key(KeyCode::Char('a'))).is_empty());
+    assert!(update(&mut model, key(KeyCode::Esc)).is_empty());
+
+    let picker = update(&mut model, key(KeyCode::Char('w')));
+    assert!(
+        picker
+            .iter()
+            .all(|command| !matches!(command, Cmd::Post(_)))
+    );
+    let request = picker
+        .into_iter()
+        .find_map(|command| match command {
+            Cmd::Get(request @ Request::Workspaces { .. }) => Some(request),
+            _ => None,
+        })
+        .expect("chooser reads the catalog");
+    respond(&mut model, request, ApiResponse::Workspaces(workspaces()));
+    assert!(update(&mut model, key(KeyCode::Esc)).is_empty());
+    let exit = update(&mut model, key(KeyCode::Char('q')));
+    assert_eq!(exit, vec![Cmd::Quit]);
+    assert!(model.pending.is_empty());
+}
+
+#[test]
+fn it_707_conflict_refetches_and_boots_the_workspace_without_a_second_add() {
+    let mut model = onboarding_model();
+    let add = confirm_add(&mut model);
+    let refetch = fail(&mut model, add, "HTTP 409: workspace already exists")
+        .into_iter()
+        .find_map(|command| match command {
+            Cmd::Get(request @ Request::Workspaces { .. }) => Some(request),
+            _ => None,
+        })
+        .expect("conflict refetches the catalog");
+    let commands = respond(
+        &mut model,
+        refetch,
+        ApiResponse::Workspaces(vec![Workspace {
+            id: "ws-new".into(),
+            name: "new-workspace".into(),
+            root_dir: "/tmp/new-workspace".into(),
+            ..Workspace::default()
+        }]),
+    );
+    assert_eq!(
+        model
+            .workspace
+            .as_ref()
+            .map(|workspace| workspace.id.as_str()),
+        Some("ws-new")
+    );
+    assert!(
+        commands
+            .iter()
+            .any(|command| matches!(command, Cmd::Get(Request::Sessions { .. })))
+    );
+    assert!(
+        commands
+            .iter()
+            .all(|command| !matches!(command, Cmd::Post(Request::AddWorkspace { .. })))
+    );
+}
+
+#[test]
+fn it_708_to_it_711_keep_recovery_read_only_after_error_or_indeterminate_add() {
+    let mut model = onboarding_model();
+    let add = confirm_add(&mut model);
+    assert!(fail(&mut model, add, "HTTP 422: invalid root").is_empty());
+    assert!(matches!(
+        model.overlay,
+        Some(Overlay::WorkspaceOnboarding {
+            adding: false,
+            message: Some(ref message),
+            ..
+        }) if message == "registration failed — HTTP 422: invalid root"
+    ));
+
+    let refresh = update(&mut model, key(KeyCode::Char('r')));
+    assert!(
+        refresh
+            .iter()
+            .all(|command| !matches!(command, Cmd::Post(_)))
+    );
+    let choose = update(&mut model, key(KeyCode::Char('w')));
+    assert!(
+        choose
+            .iter()
+            .all(|command| !matches!(command, Cmd::Post(_)))
+    );
+    assert!(update(&mut model, key(KeyCode::Esc)).is_empty());
+    assert_eq!(update(&mut model, key(KeyCode::Char('q'))), vec![Cmd::Quit]);
+
+    let mut indeterminate = onboarding_model();
+    let add = confirm_add(&mut indeterminate);
+    assert!(fail(&mut indeterminate, add, "transport: connection reset").is_empty());
+    assert!(matches!(
+        indeterminate.overlay,
+        Some(Overlay::WorkspaceOnboarding {
+            adding: false,
+            message: Some(ref message),
+            ..
+        }) if message == "workspace was not confirmed added — connection lost"
+    ));
+    let screen = render(&indeterminate, 100, 30);
+    assert!(screen.contains("[r] refresh"), "{screen}");
+    assert!(!screen.contains("[a] add this directory"), "{screen}");
+    assert!(update(&mut indeterminate, key(KeyCode::Char('a'))).is_empty());
+    assert!(update(&mut indeterminate, key(KeyCode::Enter)).is_empty());
+    let refresh = update(&mut indeterminate, key(KeyCode::Char('r')))
+        .into_iter()
+        .find_map(|command| match command {
+            Cmd::Get(request @ Request::Workspaces { .. }) => Some(request),
+            _ => None,
+        })
+        .expect("indeterminate outcome requires a read-only refresh");
+    assert!(
+        respond(
+            &mut indeterminate,
+            refresh,
+            ApiResponse::Workspaces(Vec::new())
+        )
+        .is_empty()
+    );
+    assert!(matches!(
+        indeterminate.overlay,
+        Some(Overlay::WorkspaceOnboarding {
+            adding: false,
+            message: None,
+            ..
+        })
+    ));
+    assert!(render(&indeterminate, 100, 30).contains("[a] add this directory"));
+    assert!(update(&mut indeterminate, key(KeyCode::Char('a'))).is_empty());
+    assert!(matches!(
+        update(&mut indeterminate, key(KeyCode::Enter)).as_slice(),
+        [Cmd::Post(Request::AddWorkspace { .. })]
+    ));
+
+    let mut missing_after_add = onboarding_model();
+    let add = confirm_add(&mut missing_after_add);
+    let refetch = update(
+        &mut missing_after_add,
+        Msg::Api {
+            request: add.id(),
+            result: Ok(ApiResponse::WorkspaceAdded(AddWorkspaceOutcome::Added(
+                Workspace::default(),
+            ))),
+        },
+    )
+    .into_iter()
+    .find_map(|command| match command {
+        Cmd::Get(request @ Request::Workspaces { .. }) => Some(request),
+        _ => None,
+    })
+    .expect("successful add refetches the catalog");
+    assert!(
+        respond(
+            &mut missing_after_add,
+            refetch,
+            ApiResponse::Workspaces(Vec::new())
+        )
+        .is_empty()
+    );
+    assert!(matches!(
+        missing_after_add.overlay,
+        Some(Overlay::WorkspaceOnboarding {
+            adding: false,
+            message: Some(ref message),
+            ..
+        }) if message == "workspace add returned, but /tmp/new-workspace is not in the refreshed catalog"
+    ));
+    assert!(update(&mut missing_after_add, key(KeyCode::Char('a'))).is_empty());
+    assert!(update(&mut missing_after_add, key(KeyCode::Enter)).is_empty());
+}
+
+#[test]
+fn it_712_catalog_refetch_failure_after_add_keeps_onboarding_recoverable() {
+    let mut model = onboarding_model();
+    let add = confirm_add(&mut model);
+    let refetch = update(
+        &mut model,
+        Msg::Api {
+            request: add.id(),
+            result: Ok(ApiResponse::WorkspaceAdded(AddWorkspaceOutcome::Added(
+                Workspace::default(),
+            ))),
+        },
+    )
+    .into_iter()
+    .find_map(|command| match command {
+        Cmd::Get(request @ Request::Workspaces { .. }) => Some(request),
+        _ => None,
+    })
+    .expect("successful add refetches the catalog");
+
+    assert!(fail(&mut model, refetch, "service unavailable").is_empty());
+    assert!(matches!(
+        model.overlay,
+        Some(Overlay::WorkspaceOnboarding {
+            adding: false,
+            message: Some(ref message),
+            ..
+        }) if message == "workspace registration succeeded, but catalog refresh failed — retry, choose a workspace, or exit"
+    ));
+
+    let refresh = update(&mut model, key(KeyCode::Char('r')));
+    assert!(
+        refresh
+            .iter()
+            .any(|command| matches!(command, Cmd::Get(Request::Workspaces { .. })))
+    );
+    assert_eq!(update(&mut model, key(KeyCode::Char('q'))), vec![Cmd::Quit]);
+    let choose = update(&mut model, key(KeyCode::Char('w')));
+    assert!(
+        choose
+            .iter()
+            .any(|command| matches!(command, Cmd::Get(Request::Workspaces { .. })))
+    );
 }

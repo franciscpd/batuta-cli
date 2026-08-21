@@ -4,7 +4,7 @@ use crate::{
         panels::{attention, runs, sessions},
     },
     cmd::{Cmd, Request, RequestId, StreamId, TimerId},
-    msg::{ApiResponse, ApiResult},
+    msg::{ApiError, ApiResponse, ApiResult},
 };
 use compozy_client::{
     RunControl, TaskVerb,
@@ -31,9 +31,56 @@ pub(super) fn api(model: &mut Model, id: RequestId, result: ApiResult) -> Vec<Cm
     }
 }
 
-fn failure(model: &mut Model, request: Request, error: String) -> Vec<Cmd> {
+fn failure(model: &mut Model, request: Request, error: ApiError) -> Vec<Cmd> {
     model.dirty = true;
+    if let Some(commands) = model.fail_workspace_boot(request.id(), error.display_text()) {
+        return commands;
+    }
     match &request {
+        Request::AddWorkspace { .. } => {
+            if conflict(&error.display_text()) {
+                let request = model.allocate(|id| Request::Workspaces { id });
+                return vec![Cmd::Get(request)];
+            }
+            if let Some(crate::app::model::Overlay::WorkspaceOnboarding {
+                adding,
+                confirming,
+                refresh_required,
+                message,
+                technical_details,
+                details_expanded,
+                ..
+            }) = &mut model.overlay
+            {
+                *adding = false;
+                *confirming = false;
+                let indeterminate = is_indeterminate_registration_error(&error.display_text());
+                *refresh_required = indeterminate;
+                *message = Some(if indeterminate {
+                    "workspace was not confirmed added — connection lost".into()
+                } else {
+                    format!("registration failed — {}", error.message)
+                });
+                *technical_details = error.technical_details();
+                *details_expanded = false;
+            }
+            Vec::new()
+        }
+        Request::Workspaces { .. } => {
+            if let Some(crate::app::model::Overlay::WorkspaceOnboarding {
+                adding, message, ..
+            }) = &mut model.overlay
+            {
+                *adding = false;
+                *message = Some(
+                    "workspace registration succeeded, but catalog refresh failed — retry, choose a workspace, or exit"
+                        .into(),
+                );
+                return Vec::new();
+            }
+            model.set_sticky_toast(error.display_text());
+            Vec::new()
+        }
         Request::Status { .. } => {
             model.daemon.poll_ok = false;
             model.daemon.status.clear();
@@ -41,25 +88,27 @@ fn failure(model: &mut Model, request: Request, error: String) -> Vec<Cmd> {
         }
         Request::Runs { .. } => {
             model.runs_stale = true;
-            model.set_sticky_toast(error);
+            model.set_sticky_toast(error.display_text());
             runs::any_live(model)
                 .then(|| Cmd::After(Duration::from_secs(5), TimerId::RunsPoll))
                 .into_iter()
                 .collect()
         }
-        Request::Overview { .. } if unavailable(&error) => {
+        Request::Overview { .. } if unavailable(&error.display_text()) => {
             model.attention_overview_unavailable = true;
             attention::rebuild(model);
             Vec::new()
         }
         Request::CreateSession { agent, .. } => {
             model.create_session_pending = false;
-            let text = if unavailable(&error) {
+            let text = if unavailable(&error.display_text()) {
                 "daemon is draining".into()
-            } else if error.contains("400") || error.to_lowercase().contains("agent") {
+            } else if error.display_text().contains("400")
+                || error.message.to_lowercase().contains("agent")
+            {
                 format!("agent {agent} not found in this workspace")
             } else {
-                error
+                error.display_text()
             };
             model.set_sticky_toast(text);
             Vec::new()
@@ -69,63 +118,63 @@ fn failure(model: &mut Model, request: Request, error: String) -> Vec<Cmd> {
         } => {
             model.prompt_pending = false;
             model.failed_prompt = Some((session.clone(), prompt.clone()));
-            model.set_sticky_toast(prompt_failure(&error));
+            model.set_sticky_toast(prompt_failure(&error.display_text()));
             Vec::new()
         }
         Request::CancelPrompt { .. } => {
-            model.set_sticky_toast(clean_error(&error));
+            model.set_sticky_toast(clean_error(&error.display_text()));
             Vec::new()
         }
         Request::Approve {
             session, request, ..
         } => {
-            if not_found(&error) {
+            if not_found(&error.display_text()) {
                 if let Some(items) = model.attention_permissions.get_mut(session) {
                     items.retain(|item| item.request_id != request.request_id);
                 }
                 attention::rebuild(model);
             }
-            model.set_sticky_toast(if conflict(&error) {
+            model.set_sticky_toast(if conflict(&error.display_text()) {
                 "already decided".into()
             } else {
-                error
+                error.display_text()
             });
             attention::refresh(model)
         }
         Request::AnswerClarification { .. } => {
             model.overlay = None;
-            model.set_sticky_toast(if not_found(&error) {
+            model.set_sticky_toast(if not_found(&error.display_text()) {
                 "clarification expired or already answered".into()
-            } else if error.to_lowercase().contains("draining") {
+            } else if error.message.to_lowercase().contains("draining") {
                 "daemon is draining — writes refused".into()
-            } else if unavailable(&error) {
+            } else if unavailable(&error.display_text()) {
                 "clarification service unavailable".into()
-            } else if conflict(&error) {
-                clean_error(&error)
+            } else if conflict(&error.display_text()) {
+                clean_error(&error.display_text())
             } else {
-                error
+                error.display_text()
             });
             attention::refresh(model)
         }
         Request::TaskVerb { .. } => {
-            model.set_sticky_toast(error);
+            model.set_sticky_toast(error.display_text());
             attention::refresh(model)
         }
         Request::RunControl { workspace, run, .. } | Request::RunApprove { workspace, run, .. } => {
-            model.set_sticky_toast(clean_error(&error));
+            model.set_sticky_toast(clean_error(&error.display_text()));
             refetch_run(model, workspace, run)
         }
         Request::Sessions { .. } => {
-            model.set_sticky_toast(error);
+            model.set_sticky_toast(error.display_text());
             Vec::new()
         }
-        Request::Run { .. } if not_found(&error) => {
+        Request::Run { .. } if not_found(&error.display_text()) => {
             model.detail = Detail::Empty;
-            model.set_sticky_toast(clean_error(&error));
+            model.set_sticky_toast(clean_error(&error.display_text()));
             Vec::new()
         }
         _ => {
-            model.set_sticky_toast(error);
+            model.set_sticky_toast(error.display_text());
             Vec::new()
         }
     }
@@ -141,11 +190,17 @@ fn conflict(error: &str) -> bool {
     error.contains("409") || error.to_lowercase().contains("already")
 }
 
+fn is_indeterminate_registration_error(error: &str) -> bool {
+    let error = error.to_lowercase();
+    error.contains("transport:") || error.contains("timeout")
+}
+
 fn not_found(error: &str) -> bool {
     error.contains("404") || error.to_lowercase().contains("not found")
 }
 
 fn apply(model: &mut Model, request: Request, response: ApiResponse) -> Vec<Cmd> {
+    let request_id = request.id();
     match (request, response) {
         (Request::Status { .. }, ApiResponse::Status(status)) => {
             model.daemon.status = status.daemon.status;
@@ -154,24 +209,115 @@ fn apply(model: &mut Model, request: Request, response: ApiResponse) -> Vec<Cmd>
             Vec::new()
         }
         (Request::Workspaces { .. }, ApiResponse::Workspaces(items)) => {
+            if let Some(candidate) = model.startup_candidate.clone()
+                && matches!(
+                    model.overlay,
+                    Some(crate::app::model::Overlay::WorkspaceOnboarding { .. })
+                )
+            {
+                if let Some(item) = items
+                    .into_iter()
+                    .find(|item| same_workspace_root(&item.root_dir, &candidate.root_dir))
+                {
+                    return super::picker::switch(
+                        model,
+                        crate::app::model::WorkspaceRef {
+                            id: item.id,
+                            name: item.name,
+                            root_dir: item.root_dir,
+                        },
+                    );
+                }
+                if let Some(crate::app::model::Overlay::WorkspaceOnboarding {
+                    adding,
+                    confirming,
+                    refresh_required,
+                    registration_unsupported,
+                    message,
+                    ..
+                }) = &mut model.overlay
+                {
+                    let add_returned = *adding;
+                    let refresh_was_required = *refresh_required;
+                    let registration_is_unsupported = *registration_unsupported;
+                    *adding = false;
+                    *confirming = false;
+                    *refresh_required = false;
+                    if !registration_is_unsupported {
+                        *message = if add_returned {
+                            Some(format!(
+                                "workspace add returned, but {} is not in the refreshed catalog",
+                                candidate.root_dir
+                            ))
+                        } else if refresh_was_required {
+                            None
+                        } else {
+                            Some(
+                                "this directory is not registered; add it, refresh, or choose a workspace"
+                                    .into(),
+                            )
+                        };
+                    }
+                }
+                return Vec::new();
+            }
             super::picker::apply(model, items);
             Vec::new()
         }
+        (Request::AddWorkspace { .. }, ApiResponse::WorkspaceAdded(outcome)) => match outcome {
+            compozy_client::types::AddWorkspaceOutcome::Added(_) => {
+                if let Some(crate::app::model::Overlay::WorkspaceOnboarding {
+                    registration_complete,
+                    ..
+                }) = &mut model.overlay
+                {
+                    *registration_complete = true;
+                }
+                let request = model.allocate(|id| Request::Workspaces { id });
+                vec![Cmd::Get(request)]
+            }
+            compozy_client::types::AddWorkspaceOutcome::Unsupported => {
+                if let Some(crate::app::model::Overlay::WorkspaceOnboarding {
+                    adding,
+                    confirming,
+                    registration_complete,
+                    registration_unsupported,
+                    message,
+                    ..
+                }) = &mut model.overlay
+                {
+                    *adding = false;
+                    *confirming = false;
+                    *registration_complete = true;
+                    *registration_unsupported = true;
+                    *message = model.startup_candidate.as_ref().map(|candidate| {
+                        format!(
+                            "This daemon cannot add workspaces through its API. Run: compozy workspace add {}",
+                            shell_escape(&candidate.root_dir)
+                        )
+                    });
+                }
+                Vec::new()
+            }
+        },
         (Request::Sessions { .. }, ApiResponse::Sessions(page)) => {
             sessions::apply(model, *page);
             attention::rebuild(model);
             model.dirty = true;
             let mut commands = attention::refresh(model);
             commands.extend(super::detail_session::reopen_if_active(model));
+            model.complete_workspace_boot(request_id);
             commands
         }
         (Request::Runs { .. }, ApiResponse::Runs(page)) => {
             runs::apply(model, *page);
             model.dirty = true;
-            runs::any_live(model)
+            let commands = runs::any_live(model)
                 .then(|| Cmd::After(Duration::from_secs(5), TimerId::RunsPoll))
                 .into_iter()
-                .collect()
+                .collect();
+            model.complete_workspace_boot(request_id);
+            commands
         }
         (Request::Overview { .. }, ApiResponse::Overview(overview)) => {
             model.attention_overview_total = overview.attention.total;
@@ -179,6 +325,7 @@ fn apply(model: &mut Model, request: Request, response: ApiResponse) -> Vec<Cmd>
             model.attention_overview_unavailable = false;
             attention::rebuild(model);
             model.dirty = true;
+            model.complete_workspace_boot(request_id);
             Vec::new()
         }
         (Request::Clarifications { session, .. }, ApiResponse::Clarifications(items)) => {
@@ -341,6 +488,26 @@ fn apply(model: &mut Model, request: Request, response: ApiResponse) -> Vec<Cmd>
             commands
         }
         (_, _) => Vec::new(),
+    }
+}
+
+fn same_workspace_root(left: &str, right: &str) -> bool {
+    left == right
+        || std::fs::canonicalize(left)
+            .ok()
+            .zip(std::fs::canonicalize(right).ok())
+            .is_some_and(|(left, right)| left == right)
+}
+
+fn shell_escape(value: &str) -> String {
+    if !value.is_empty()
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || b"_+-=.,/:@".contains(&byte))
+    {
+        value.into()
+    } else {
+        format!("'{}'", value.replace('\'', "'\"'\"'"))
     }
 }
 

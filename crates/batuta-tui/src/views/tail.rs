@@ -6,7 +6,7 @@ use ratatui::{
     widgets::Paragraph,
 };
 
-const KEYS: &str = "j/k move  Enter expand  t reasoning  G newest  g oldest  q quit";
+const KEYS: &str = "j/k move  Enter expand  t reasoning  D raw debug  G newest  g oldest  q quit";
 pub fn view(model: &Model, frame: &mut Frame<'_>) {
     let area = frame.area();
     if area.width < 20 {
