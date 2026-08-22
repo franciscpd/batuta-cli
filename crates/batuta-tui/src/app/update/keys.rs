@@ -441,14 +441,15 @@ fn text_key(model: &mut Model, key: KeyEvent) -> Vec<Cmd> {
             }
             _ => {}
         }
-        if filtering_sessions {
+        let commands = if filtering_sessions {
             crate::app::panels::sessions::refilter(model, None);
-            crate::app::panels::attention::rebuild(model);
+            crate::app::panels::attention::rebuild(model)
         } else {
             crate::app::panels::runs::refilter(model, None);
-        }
+            Vec::new()
+        };
         model.dirty = true;
-        return Vec::new();
+        return commands;
     }
     super::composer::key(model, key)
 }

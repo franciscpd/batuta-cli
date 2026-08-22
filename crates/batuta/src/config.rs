@@ -43,6 +43,7 @@ pub struct UiFile {
     pub fps: Option<u16>,
     pub sessions_limit: Option<u64>,
     pub runs_limit: Option<u64>,
+    pub notify: Option<bool>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -244,6 +245,7 @@ pub fn resolve(cli: &Cli, env: &Env, file: Option<ConfigFile>) -> Result<Setting
         "runs_limit",
         &mut warnings,
     );
+    let notify = file.ui.notify.unwrap_or(true);
     let (workspace, workspace_source) = match (
         cli.workspace.as_deref().filter(|value| !value.is_empty()),
         env.workspace.as_deref().filter(|value| !value.is_empty()),
@@ -267,6 +269,7 @@ pub fn resolve(cli: &Cli, env: &Env, file: Option<ConfigFile>) -> Result<Setting
             fps,
             sessions_limit,
             runs_limit,
+            notify,
         },
         workspace,
         workspace_source,
@@ -337,7 +340,15 @@ fn unknown_key_warnings(value: &toml::Value) -> Vec<String> {
         ("daemon", ["transport", "tcp_addr"].as_slice()),
         (
             "ui",
-            ["color", "theme", "fps", "sessions_limit", "runs_limit"].as_slice(),
+            [
+                "color",
+                "theme",
+                "fps",
+                "sessions_limit",
+                "runs_limit",
+                "notify",
+            ]
+            .as_slice(),
         ),
     ];
     let mut warnings = Vec::new();
@@ -400,6 +411,22 @@ mod tests {
         assert_eq!(settings.ui.fps, 25);
         assert_eq!(settings.ui.sessions_limit, 2);
         assert_eq!(settings.ui.runs_limit, 3);
+    }
+
+    #[test]
+    fn ut_761_notify_key_resolves_and_defaults_true() {
+        let temp = tempdir().unwrap();
+        let path = temp.path().join("config.toml");
+        fs::write(&path, "[ui]\nnotify=false\n").unwrap();
+        let mut value = cli();
+        value.config = Some(path);
+        let settings = load_and_resolve(&value, &Env::default()).unwrap();
+        assert!(!settings.ui.notify);
+
+        let mut missing = cli();
+        missing.config = Some(temp.path().join("missing.toml"));
+        let settings = load_and_resolve(&missing, &Env::default()).unwrap();
+        assert!(settings.ui.notify);
     }
 
     #[test]

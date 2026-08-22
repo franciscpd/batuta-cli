@@ -209,4 +209,5 @@ pub enum Cmd {
     After(Duration, TimerId),
     Render,
     Quit,
+    Notify { body: String },
 }

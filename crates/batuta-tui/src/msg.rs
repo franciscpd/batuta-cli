@@ -113,6 +113,7 @@ pub enum Msg {
     Key(KeyEvent),
     Mouse(MouseEvent),
     Resize(u16, u16),
+    TerminalFocus(bool),
     Tick,
     Api {
         request: RequestId,

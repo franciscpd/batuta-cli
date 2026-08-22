@@ -19,6 +19,10 @@ pub fn update(model: &mut Model, msg: Msg) -> Vec<Cmd> {
     let commands = match msg {
         Msg::Key(key) => keys::key(model, key),
         Msg::Mouse(_) => Vec::new(),
+        Msg::TerminalFocus(focused) => {
+            model.terminal_focused = focused;
+            Vec::new()
+        }
         Msg::Resize(width, height) => {
             model.size = (width, height);
             let closing_logs = if model.too_small() {

@@ -80,6 +80,7 @@ color = "auto"            # auto | never       (NO_COLOR forces never)
 fps = 30                  # render tick, clamped 5..60
 sessions_limit = 50       # rows requested for [1] (1..100)
 runs_limit = 50           # rows requested for [2]
+notify = true             # bell + OSC 9 when unfocused and attention arrives
 ```
 
 Precedence is flags, environment, file, then defaults. `doctor` reports the

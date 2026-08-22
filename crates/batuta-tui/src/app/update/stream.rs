@@ -39,8 +39,8 @@ pub(super) fn stream(model: &mut Model, id: StreamId, event: AnyStreamEvent) -> 
             }
             if permission_delta {
                 crate::app::panels::attention::sync_open_detail(model);
-                crate::app::panels::attention::rebuild(model);
                 let mut all = commands;
+                all.extend(crate::app::panels::attention::rebuild(model));
                 all.extend(super::attention::refresh(model));
                 all
             } else {

@@ -96,8 +96,7 @@ fn failure(model: &mut Model, request: Request, error: ApiError) -> Vec<Cmd> {
         }
         Request::Overview { .. } if unavailable(&error.display_text()) => {
             model.attention_overview_unavailable = true;
-            attention::rebuild(model);
-            Vec::new()
+            attention::rebuild(model)
         }
         Request::CreateSession { agent, .. } => {
             model.create_session_pending = false;
@@ -128,18 +127,20 @@ fn failure(model: &mut Model, request: Request, error: ApiError) -> Vec<Cmd> {
         Request::Approve {
             session, request, ..
         } => {
+            let mut commands = Vec::new();
             if not_found(&error.display_text()) {
                 if let Some(items) = model.attention_permissions.get_mut(session) {
                     items.retain(|item| item.request_id != request.request_id);
                 }
-                attention::rebuild(model);
+                commands.extend(attention::rebuild(model));
             }
             model.set_sticky_toast(if conflict(&error.display_text()) {
                 "already decided".into()
             } else {
                 error.display_text()
             });
-            attention::refresh(model)
+            commands.extend(attention::refresh(model));
+            commands
         }
         Request::AnswerClarification { .. } => {
             model.overlay = None;
@@ -302,9 +303,9 @@ fn apply(model: &mut Model, request: Request, response: ApiResponse) -> Vec<Cmd>
         },
         (Request::Sessions { .. }, ApiResponse::Sessions(page)) => {
             sessions::apply(model, *page);
-            attention::rebuild(model);
+            let mut commands = attention::rebuild(model);
             model.dirty = true;
-            let mut commands = attention::refresh(model);
+            commands.extend(attention::refresh(model));
             commands.extend(super::detail_session::reopen_if_active(model));
             model.complete_workspace_boot(request_id);
             commands
@@ -323,21 +324,21 @@ fn apply(model: &mut Model, request: Request, response: ApiResponse) -> Vec<Cmd>
             model.attention_overview_total = overview.attention.total;
             model.attention_overview = overview.attention.items;
             model.attention_overview_unavailable = false;
-            attention::rebuild(model);
+            let commands = attention::rebuild(model);
             model.dirty = true;
             model.complete_workspace_boot(request_id);
-            Vec::new()
+            commands
         }
         (Request::Clarifications { session, .. }, ApiResponse::Clarifications(items)) => {
             model.attention_clarifications.insert(session, items);
-            attention::rebuild(model);
+            let commands = attention::rebuild(model);
             model.dirty = true;
-            Vec::new()
+            commands
         }
         (Request::VisibleTranscript { session, .. }, ApiResponse::TranscriptPage(page)) => {
-            attention::apply_transcript(model, &session, &page);
+            let commands = attention::apply_transcript(model, &session, &page);
             model.dirty = true;
-            Vec::new()
+            commands
         }
         (Request::Session { session: id, .. }, ApiResponse::Session(session)) => {
             if let Some(detail) = model
@@ -350,12 +351,12 @@ fn apply(model: &mut Model, request: Request, response: ApiResponse) -> Vec<Cmd>
             Vec::new()
         }
         (Request::TranscriptPage { session, .. }, ApiResponse::TranscriptPage(page)) => {
-            attention::apply_transcript(model, &session, &page);
+            let mut commands = attention::apply_transcript(model, &session, &page);
             let Some(detail) = model
                 .session_detail_mut()
                 .filter(|detail| detail.session.id == session)
             else {
-                return Vec::new();
+                return commands;
             };
             page_into_detail(detail, *page);
             let cursor = detail.transcript.cursor();
@@ -373,10 +374,10 @@ fn apply(model: &mut Model, request: Request, response: ApiResponse) -> Vec<Cmd>
             model.dirty = true;
             if stopped {
                 model.active_streams.remove(&StreamId::Transcript(session));
-                Vec::new()
             } else {
-                vec![Cmd::StartStream(StreamId::Transcript(session))]
+                commands.push(Cmd::StartStream(StreamId::Transcript(session)));
             }
+            commands
         }
         (Request::Run { run, .. }, ApiResponse::Run(value)) => {
             if let Detail::Run(detail) = &mut model.detail

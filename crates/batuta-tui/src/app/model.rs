@@ -90,6 +90,7 @@ pub struct UiSettings {
     pub fps: u16,
     pub sessions_limit: u64,
     pub runs_limit: u64,
+    pub notify: bool,
 }
 impl Default for UiSettings {
     fn default() -> Self {
@@ -99,6 +100,7 @@ impl Default for UiSettings {
             fps: 30,
             sessions_limit: 50,
             runs_limit: 50,
+            notify: true,
         }
     }
 }
@@ -516,6 +518,7 @@ pub struct Model {
     pub stream_cursors: HashMap<StreamId, String>,
     pub theme: Theme,
     pub quit_guard: bool,
+    pub terminal_focused: bool,
     next_request: u64,
     next_message: u64,
 }
@@ -583,6 +586,7 @@ impl Model {
                 std::env::var("COLORFGBG").ok().as_deref(),
             ),
             quit_guard: false,
+            terminal_focused: true,
             next_request: 1,
             next_message: 1,
         }
