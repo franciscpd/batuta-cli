@@ -136,8 +136,7 @@ pub(super) fn apply_global_action(model: &mut Model, action: Action) -> Vec<Cmd>
             model.dirty = true;
             Vec::new()
         }
-        // Bound to nothing by default in v1 (Task 7 binds ctrl+p).
-        Action::Palette => Vec::new(),
+        Action::Palette => super::palette::open(model),
         // Lists-group actions never reach the Global dispatch.
         _ => Vec::new(),
     }
@@ -712,6 +711,9 @@ fn overlay_key(model: &mut Model, key: KeyEvent) -> Vec<Cmd> {
     }
     if matches!(model.overlay, Some(Overlay::WorkspaceOnboarding { .. })) {
         return onboarding_key(model, key);
+    }
+    if matches!(model.overlay, Some(Overlay::Palette { .. })) {
+        return super::palette::key(model, key);
     }
     match &mut model.overlay {
         Some(Overlay::Help { scroll }) => match key.code {

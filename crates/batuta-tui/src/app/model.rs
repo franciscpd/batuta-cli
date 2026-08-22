@@ -450,6 +450,10 @@ pub enum Overlay {
         text_focused: bool,
         hint: Option<String>,
     },
+    Palette {
+        query: String,
+        selected: usize,
+    },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

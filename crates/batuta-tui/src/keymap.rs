@@ -54,6 +54,11 @@ pub const BINDINGS: &[Binding] = &[
         action: "quit",
     },
     Binding {
+        context: Context::Global,
+        keys: "Ctrl+P",
+        action: "palette",
+    },
+    Binding {
         context: Context::Lists,
         keys: "j/k/↑/↓/PgUp/PgDn/g/G",
         action: "move",
@@ -189,7 +194,7 @@ pub enum Action {
 }
 
 impl Action {
-    fn group(self) -> ContextGroup {
+    pub(crate) fn group(self) -> ContextGroup {
         match self {
             Action::FocusSessions
             | Action::FocusRuns
@@ -537,8 +542,10 @@ impl Default for Keymap {
                 Action::Quit,
                 &[combo(KeyCode::Char('q'), KeyModifiers::NONE)],
             ),
-            // Action::Palette is intentionally left unbound in v1 (Task 7
-            // binds ctrl+p).
+            (
+                Action::Palette,
+                &[combo(KeyCode::Char('p'), KeyModifiers::CONTROL)],
+            ),
             (
                 Action::MoveDown,
                 &[
@@ -627,6 +634,16 @@ pub fn combo_display(combo: &KeyCombo) -> String {
         KeyCode::End => "End".to_owned(),
         KeyCode::F(n) => format!("F{n}"),
         KeyCode::Char(' ') => "Space".to_owned(),
+        // crossterm always reports `Ctrl+<letter>` as the lowercase char
+        // (see `normalize_event`'s doc comment); uppercase it for display
+        // so e.g. `ctrl+p` reads as `Ctrl+P`, matching the capitalization
+        // the hardcoded contexts' `Binding.keys` text already uses for
+        // their own `Ctrl+X`-style combos.
+        KeyCode::Char(c)
+            if combo.modifiers.contains(KeyModifiers::CONTROL) && c.is_ascii_alphabetic() =>
+        {
+            c.to_ascii_uppercase().to_string()
+        }
         KeyCode::Char(c) => c.to_string(),
         other => format!("{other:?}"),
     };
@@ -916,6 +933,12 @@ pub fn help_lines(keymap: &Keymap) -> Vec<String> {
         if matches!(context, Context::Global | Context::Lists) {
             for row in dynamic_rows(*context) {
                 rows.push(((row.keys)(keymap), row.action));
+            }
+            if *context == Context::Global {
+                // `Action::Palette` intentionally isn't a footer row (Task 7
+                // brief: help entry only) so it stays out of `DYNAMIC_ROWS`,
+                // which `footer()` also reads from.
+                rows.push((joined_combos(keymap, Action::Palette), "palette"));
             }
             if *context == Context::Lists {
                 for row in dynamic_rows(Context::Sessions) {

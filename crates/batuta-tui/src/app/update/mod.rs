@@ -6,6 +6,7 @@ mod detail_run;
 mod detail_session;
 mod keys;
 mod logs;
+pub(crate) mod palette;
 mod picker;
 mod prompt;
 mod runs;

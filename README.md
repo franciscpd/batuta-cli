@@ -124,7 +124,8 @@ than failing config load.
 
 Action names (Global): `focus_sessions`, `focus_runs`, `focus_attention`,
 `focus_detail`, `next_panel`, `previous_panel`, `workspace`, `logs`,
-`help`, `quit`, `palette` (unbound by default in this release).
+`help`, `quit`, `palette` (`Ctrl+P` by default — opens the command
+palette).
 
 Action names (Lists): `move_down`, `move_up`, `page_down`, `page_up`,
 `top`, `bottom`, `open`, `filter`, `toggle_scope`, `refresh`, `yank`,
@@ -151,6 +152,7 @@ These are the defaults. Global and Lists rows are configurable via the
 | Global | `L` | logs overlay for the focused item |
 | Global | `?` (`F1` in text fields) | help |
 | Global | `q` (outside text fields), `Ctrl+C` | quit (draft guard) |
+| Global | `Ctrl+P` | command palette |
 | Lists | `j`/`↓`, `k`/`↑`, `PgUp`, `PgDn`, `g`, `G` | move / jump |
 | Lists | `Enter` | open in `[4]` |
 | Lists | `/` | filter (type, `Enter` keep, `Esc` clear) |
