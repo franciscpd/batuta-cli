@@ -55,6 +55,16 @@ pub enum ThemeMode {
     Light,
 }
 
+/// Config-facing color depth selector. `Auto` is resolved to a concrete
+/// `theme::ColorDepth` outside the TUI crate (in `crates/batuta`), which is
+/// the only place allowed to inspect `COLORTERM`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ColorDepthMode {
+    #[default]
+    Auto,
+    Ansi16,
+}
+
 impl From<ThemeMode> for ThemeVariant {
     fn from(value: ThemeMode) -> Self {
         match value {
@@ -87,6 +97,7 @@ impl Default for Preset {
 pub struct UiSettings {
     pub color: ColorMode,
     pub theme: ThemeMode,
+    pub color_depth: ColorDepthMode,
     pub fps: u16,
     pub sessions_limit: u64,
     pub runs_limit: u64,
@@ -97,6 +108,7 @@ impl Default for UiSettings {
         Self {
             color: ColorMode::Auto,
             theme: ThemeMode::Auto,
+            color_depth: ColorDepthMode::Auto,
             fps: 30,
             sessions_limit: 50,
             runs_limit: 50,

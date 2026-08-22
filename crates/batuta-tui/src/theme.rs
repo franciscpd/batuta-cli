@@ -1,5 +1,12 @@
 use ratatui::style::{Color, Modifier, Style};
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ColorDepth {
+    #[default]
+    Ansi16,
+    TrueColor,
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub enum ThemeVariant {
     #[default]
@@ -104,6 +111,15 @@ impl Theme {
     }
 
     pub fn with_variant(color: bool, variant: ThemeVariant, colorfgbg: Option<&str>) -> Self {
+        Self::with_options(color, variant, colorfgbg, ColorDepth::Ansi16)
+    }
+
+    pub fn with_options(
+        color: bool,
+        variant: ThemeVariant,
+        colorfgbg: Option<&str>,
+        depth: ColorDepth,
+    ) -> Self {
         let variant = variant.resolve(colorfgbg);
         let colored = |color_value| {
             if color {
@@ -112,8 +128,8 @@ impl Theme {
                 Style::default()
             }
         };
-        let (muted, active, success, waiting, error, system) = match variant {
-            ThemeVariant::Dark | ThemeVariant::Auto => (
+        let (muted, active, success, waiting, error, system) = match (depth, variant) {
+            (ColorDepth::Ansi16, ThemeVariant::Dark | ThemeVariant::Auto) => (
                 Color::DarkGray,
                 Color::Cyan,
                 Color::Green,
@@ -121,13 +137,29 @@ impl Theme {
                 Color::Red,
                 Color::Magenta,
             ),
-            ThemeVariant::Light => (
+            (ColorDepth::Ansi16, ThemeVariant::Light) => (
                 Color::Gray,
                 Color::Blue,
                 Color::Green,
                 Color::Yellow,
                 Color::Red,
                 Color::Magenta,
+            ),
+            (ColorDepth::TrueColor, ThemeVariant::Dark | ThemeVariant::Auto) => (
+                Color::Rgb(0x8a, 0x8f, 0x98),
+                Color::Rgb(0x4f, 0xc1, 0xe9),
+                Color::Rgb(0x5c, 0xb8, 0x5c),
+                Color::Rgb(0xe0, 0xa8, 0x3f),
+                Color::Rgb(0xe5, 0x53, 0x4b),
+                Color::Rgb(0xb0, 0x7f, 0xd8),
+            ),
+            (ColorDepth::TrueColor, ThemeVariant::Light) => (
+                Color::Rgb(0x6c, 0x70, 0x78),
+                Color::Rgb(0x1a, 0x6f, 0xb5),
+                Color::Rgb(0x2e, 0x7d, 0x32),
+                Color::Rgb(0xb0, 0x7d, 0x10),
+                Color::Rgb(0xc6, 0x28, 0x28),
+                Color::Rgb(0x7b, 0x3f, 0xa0),
             ),
         };
         Self {
@@ -262,5 +294,37 @@ mod tests {
         assert_eq!(ActivityState::Waiting.token(), SemanticToken::Waiting);
         assert_eq!(ActivityState::Completed.token(), SemanticToken::Success);
         assert_eq!(ActivityState::Failed.token(), SemanticToken::Error);
+    }
+
+    const ALL_TOKENS: [SemanticToken; 8] = [
+        SemanticToken::Text,
+        SemanticToken::Muted,
+        SemanticToken::Active,
+        SemanticToken::Success,
+        SemanticToken::Waiting,
+        SemanticToken::Error,
+        SemanticToken::Destructive,
+        SemanticToken::System,
+    ];
+
+    #[test]
+    fn ut_768_ansi16_depth_never_emits_rgb() {
+        for variant in [ThemeVariant::Dark, ThemeVariant::Light] {
+            let theme = Theme::with_options(true, variant, None, ColorDepth::Ansi16);
+            for token in ALL_TOKENS {
+                assert!(!matches!(theme.style(token).fg, Some(Color::Rgb(..))));
+            }
+        }
+    }
+
+    #[test]
+    fn ut_769_truecolor_depth_uses_rgb_and_respects_no_color() {
+        let theme = Theme::with_options(true, ThemeVariant::Dark, None, ColorDepth::TrueColor);
+        assert!(matches!(
+            theme.style(SemanticToken::Active).fg,
+            Some(Color::Rgb(..))
+        ));
+        let plain = Theme::with_options(false, ThemeVariant::Dark, None, ColorDepth::TrueColor);
+        assert_eq!(plain.style(SemanticToken::Active).fg, None);
     }
 }

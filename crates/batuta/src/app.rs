@@ -1,5 +1,13 @@
-use crate::{cli::Cli, config::Settings, exit::AppError, probe, terminal, version, workspace};
-use batuta_tui::app::{AppMode, Model, Toast, ToastKind, WorkspaceRef};
+use crate::{
+    cli::Cli,
+    config::{Settings, resolve_color_depth},
+    exit::AppError,
+    probe, terminal, version, workspace,
+};
+use batuta_tui::{
+    app::{AppMode, ColorMode, Model, Toast, ToastKind, WorkspaceRef},
+    theme::Theme,
+};
 use compozy_client::{Client, Outcome, ProbeReport, Transport};
 use crossterm::event::{Event, EventStream, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use futures_util::StreamExt;
@@ -32,6 +40,18 @@ pub async fn run(cli: &Cli, settings: &Settings) -> Result<(), AppError> {
         root_dir: workspace.root_dir.clone(),
     });
     let mut model = Model::new(settings.tui_settings(workspace_ref), AppMode::Full);
+    // The TUI crate never reads COLORTERM; resolve the truecolor opt-in
+    // here and re-thread it into the theme it already built.
+    let depth = resolve_color_depth(
+        model.settings.ui.color_depth,
+        std::env::var("COLORTERM").ok().as_deref(),
+    );
+    model.theme = Theme::with_options(
+        model.settings.ui.color != ColorMode::Never,
+        model.settings.ui.theme.into(),
+        std::env::var("COLORFGBG").ok().as_deref(),
+        depth,
+    );
     if let workspace::WorkspaceResolution::Unresolved(candidate) = resolution {
         model.start_workspace_onboarding(batuta_tui::app::WorkspaceCandidate {
             name: candidate.name,

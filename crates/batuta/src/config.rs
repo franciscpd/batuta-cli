@@ -2,7 +2,10 @@ use crate::{
     cli::{Cli, DaemonArg},
     workspace::WorkspaceSelectorSource,
 };
-use batuta_tui::app::{ColorMode, Preset, Settings as TuiSettings, ThemeMode, UiSettings};
+use batuta_tui::{
+    app::{ColorDepthMode, ColorMode, Preset, Settings as TuiSettings, ThemeMode, UiSettings},
+    theme::ColorDepth,
+};
 use serde::Deserialize;
 use std::{
     env,
@@ -40,6 +43,7 @@ pub struct DaemonFile {
 pub struct UiFile {
     pub color: Option<String>,
     pub theme: Option<String>,
+    pub color_depth: Option<String>,
     pub fps: Option<u16>,
     pub sessions_limit: Option<u64>,
     pub runs_limit: Option<u64>,
@@ -230,6 +234,15 @@ pub fn resolve(cli: &Cli, env: &Env, file: Option<ConfigFile>) -> Result<Setting
         parse_color(file.ui.color.as_deref()).unwrap_or(ColorMode::Auto)
     };
     let theme = parse_theme(file.ui.theme.as_deref()).unwrap_or(ThemeMode::Auto);
+    let color_depth = match file.ui.color_depth.as_deref() {
+        None => ColorDepthMode::Auto,
+        Some(value) => parse_color_depth(Some(value)).unwrap_or_else(|| {
+            warnings.push(format!(
+                "config: ui.color_depth={value} invalid, using auto"
+            ));
+            ColorDepthMode::Auto
+        }),
+    };
     let fps = clamp(file.ui.fps.unwrap_or(30), 5, 60, "fps", &mut warnings);
     let sessions_limit = clamp(
         file.ui.sessions_limit.unwrap_or(50),
@@ -266,6 +279,7 @@ pub fn resolve(cli: &Cli, env: &Env, file: Option<ConfigFile>) -> Result<Setting
         ui: UiSettings {
             color,
             theme,
+            color_depth,
             fps,
             sessions_limit,
             runs_limit,
@@ -302,6 +316,28 @@ fn parse_theme(value: Option<&str>) -> Option<ThemeMode> {
         Some("dark") => Some(ThemeMode::Dark),
         Some("light") => Some(ThemeMode::Light),
         _ => None,
+    }
+}
+
+fn parse_color_depth(value: Option<&str>) -> Option<ColorDepthMode> {
+    match value {
+        Some("auto") => Some(ColorDepthMode::Auto),
+        Some("ansi16") => Some(ColorDepthMode::Ansi16),
+        _ => None,
+    }
+}
+
+/// Resolves the config-facing `ColorDepthMode` to a concrete `ColorDepth`.
+/// This is the only place in `crates/batuta` allowed to interpret
+/// `COLORTERM`; the TUI crate never reads it. `Auto` becomes `TrueColor`
+/// iff `COLORTERM` is `truecolor` or `24bit`, otherwise `Ansi16`.
+pub fn resolve_color_depth(mode: ColorDepthMode, colorterm: Option<&str>) -> ColorDepth {
+    match mode {
+        ColorDepthMode::Ansi16 => ColorDepth::Ansi16,
+        ColorDepthMode::Auto => match colorterm {
+            Some("truecolor" | "24bit") => ColorDepth::TrueColor,
+            _ => ColorDepth::Ansi16,
+        },
     }
 }
 
@@ -343,6 +379,7 @@ fn unknown_key_warnings(value: &toml::Value) -> Vec<String> {
             [
                 "color",
                 "theme",
+                "color_depth",
                 "fps",
                 "sessions_limit",
                 "runs_limit",
@@ -427,6 +464,60 @@ mod tests {
         missing.config = Some(temp.path().join("missing.toml"));
         let settings = load_and_resolve(&missing, &Env::default()).unwrap();
         assert!(settings.ui.notify);
+    }
+
+    #[test]
+    fn ut_770_color_depth_reads_file_warns_on_invalid_and_no_color_still_wins() {
+        // File value is read.
+        let temp = tempdir().unwrap();
+        let path = temp.path().join("config.toml");
+        fs::write(&path, "[ui]\ncolor_depth='ansi16'\n").unwrap();
+        let mut value = cli();
+        value.config = Some(path);
+        let settings = load_and_resolve(&value, &Env::default()).unwrap();
+        assert_eq!(settings.ui.color_depth, ColorDepthMode::Ansi16);
+
+        // Missing key defaults to Auto.
+        let mut missing = cli();
+        missing.config = Some(temp.path().join("missing.toml"));
+        let settings = load_and_resolve(&missing, &Env::default()).unwrap();
+        assert_eq!(settings.ui.color_depth, ColorDepthMode::Auto);
+
+        // Invalid value warns and falls back to Auto.
+        let bad_temp = tempdir().unwrap();
+        let bad_path = bad_temp.path().join("config.toml");
+        fs::write(&bad_path, "[ui]\ncolor_depth='bogus'\n").unwrap();
+        let mut bad = cli();
+        bad.config = Some(bad_path);
+        let settings = load_and_resolve(&bad, &Env::default()).unwrap();
+        assert_eq!(settings.ui.color_depth, ColorDepthMode::Auto);
+        assert!(
+            settings
+                .warnings
+                .iter()
+                .any(|warning| warning.contains("color_depth"))
+        );
+
+        // NO_COLOR still wins end-to-end even with a truecolor-capable
+        // terminal and Auto depth.
+        let env = Env {
+            workspace: None,
+            no_color: true,
+        };
+        let settings = load_and_resolve(&missing, &env).unwrap();
+        assert_eq!(settings.ui.color, ColorMode::Never);
+        let depth = resolve_color_depth(settings.ui.color_depth, Some("truecolor"));
+        assert_eq!(depth, ColorDepth::TrueColor);
+        let theme = batuta_tui::theme::Theme::with_options(
+            settings.ui.color != ColorMode::Never,
+            settings.ui.theme.into(),
+            None,
+            depth,
+        );
+        assert_eq!(
+            theme.style(batuta_tui::theme::SemanticToken::Active).fg,
+            None
+        );
     }
 
     #[test]

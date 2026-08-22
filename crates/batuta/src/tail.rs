@@ -1,4 +1,10 @@
-use crate::{app, cli::Cli, config::Settings, exit::AppError, probe, version, workspace};
+use crate::{
+    app,
+    cli::Cli,
+    config::{Settings, resolve_color_depth},
+    exit::AppError,
+    probe, version, workspace,
+};
 use batuta_tui::{
     app::{ColorMode, FooterState, Model, Preset, SessionHeader, UiSettings},
     theme::Theme,
@@ -105,10 +111,15 @@ async fn run_terminal(
 fn apply_settings(model: &mut Model, preset: Preset, ui: UiSettings) {
     model.settings.preset = preset;
     model.settings.ui = ui;
-    model.theme = Theme::with_variant(
+    let depth = resolve_color_depth(
+        model.settings.ui.color_depth,
+        std::env::var("COLORTERM").ok().as_deref(),
+    );
+    model.theme = Theme::with_options(
         model.settings.ui.color != ColorMode::Never,
         model.settings.ui.theme.into(),
         std::env::var("COLORFGBG").ok().as_deref(),
+        depth,
     );
     if let Some(detail) = model.session_detail_mut() {
         detail.view.render_cache.clear();

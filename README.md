@@ -77,6 +77,7 @@ tcp_addr = "localhost:2123"
 [ui]
 theme = "auto"            # auto | dark | light (uses COLORFGBG when auto)
 color = "auto"            # auto | never       (NO_COLOR forces never)
+color_depth = "auto"      # auto (truecolor when COLORTERM says so) | ansi16
 fps = 30                  # render tick, clamped 5..60
 sessions_limit = 50       # rows requested for [1] (1..100)
 runs_limit = 50           # rows requested for [2]
