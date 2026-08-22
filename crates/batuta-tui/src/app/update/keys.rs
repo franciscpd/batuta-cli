@@ -68,18 +68,7 @@ pub(super) fn key(model: &mut Model, key: KeyEvent) -> Vec<Cmd> {
         // to sit above the Tab/digit/w match. Quit/Logs/Help stay reachable
         // regardless of mode, exactly as they were before this action was
         // extracted from a dedicated hardcoded check.
-        if model.mode == AppMode::TailOnly
-            && matches!(
-                action,
-                Action::FocusSessions
-                    | Action::FocusRuns
-                    | Action::FocusAttention
-                    | Action::FocusDetail
-                    | Action::NextPanel
-                    | Action::PreviousPanel
-                    | Action::Workspace
-            )
-        {
+        if model.mode == AppMode::TailOnly && tail_only_inert(action) {
             return detail_key(model, key);
         }
         return apply_global_action(model, action);
@@ -91,6 +80,35 @@ pub(super) fn key(model: &mut Model, key: KeyEvent) -> Vec<Cmd> {
         Panel::Sessions | Panel::Runs | Panel::Attention => list_key(model, key),
         Panel::Detail => detail_key(model, key),
     }
+}
+
+/// `TailOnly` mode hides Sessions/Runs/Attention entirely (and never
+/// renders any overlay — `views/mod.rs` early-returns `tail::view`), so any
+/// action that would change panel focus, open the workspace picker, or open
+/// the command palette must be inert there rather than silently opening
+/// state that can never be seen or closed. Mirrors the old hardcoded
+/// `if TailOnly { return detail_key(...) }` gate that used to sit above the
+/// Tab/digit/w match. Quit/Logs/Help stay reachable regardless of mode,
+/// exactly as they were before this action was extracted from a dedicated
+/// hardcoded check.
+///
+/// Shared with `palette::dispatch`, which applies this same gate before
+/// calling `apply_global_action` directly (defense in depth: `Action::Palette`
+/// is also excluded from opening at all in `TailOnly` — see the `key()` gate
+/// above — so this only matters if some future entry point reintroduces a
+/// path to `apply_global_action` that skips that gate).
+pub(super) fn tail_only_inert(action: Action) -> bool {
+    matches!(
+        action,
+        Action::FocusSessions
+            | Action::FocusRuns
+            | Action::FocusAttention
+            | Action::FocusDetail
+            | Action::NextPanel
+            | Action::PreviousPanel
+            | Action::Workspace
+            | Action::Palette
+    )
 }
 
 fn focus_changed(model: &mut Model) -> Vec<Cmd> {

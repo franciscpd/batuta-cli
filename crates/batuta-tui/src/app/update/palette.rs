@@ -1,5 +1,5 @@
 use crate::{
-    app::model::{Model, Overlay, Panel},
+    app::model::{AppMode, Model, Overlay, Panel},
     cmd::Cmd,
     keymap::{Action, ContextGroup},
 };
@@ -141,6 +141,16 @@ fn dispatch(model: &mut Model, action: Option<Action>) -> Vec<Cmd> {
     let Some(action) = action else {
         return Vec::new();
     };
+    // Defense in depth: `Action::Palette` is excluded from `TailOnly` at the
+    // point the palette can open at all (see `keys::tail_only_inert`), so
+    // this branch is unreachable today. It stays here so a future entry
+    // point into `dispatch` can't silently reintroduce the invisible-overlay
+    // bypass this gate exists to prevent — `TailOnly` never renders any
+    // overlay (`views/mod.rs` early-returns `tail::view`), so an action that
+    // opens one there would be invisible and eat every keystroke.
+    if model.mode == AppMode::TailOnly && super::keys::tail_only_inert(action) {
+        return Vec::new();
+    }
     match action.group() {
         ContextGroup::Global => super::keys::apply_global_action(model, action),
         ContextGroup::Lists => {

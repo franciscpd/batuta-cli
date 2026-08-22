@@ -3,7 +3,7 @@ mod panels_support;
 
 use batuta_tui::{
     Cmd, Msg,
-    app::{Overlay, Panel},
+    app::{AppMode, Overlay, Panel, Settings},
     update,
 };
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
@@ -85,4 +85,34 @@ fn palette_new_session_focuses_sessions_then_dispatches() {
     assert!(model.overlay.is_none());
     assert_eq!(model.focus, Panel::Sessions);
     assert!(commands.iter().any(|cmd| matches!(cmd, Cmd::Post(_))));
+}
+
+fn model_tail_only() -> batuta_tui::Model {
+    batuta_tui::Model::new(Settings::default(), AppMode::TailOnly)
+}
+
+#[test]
+fn palette_ctrl_p_does_not_open_in_tail_only_mode() {
+    // `TailOnly` never renders any overlay (`views/mod.rs` early-returns
+    // `tail::view`), so an overlay that opened here would be invisible and
+    // would swallow every subsequent keystroke — including the `j`/`k`/`t`/
+    // `D`/`g`/`G` keys `tail`'s own footer advertises. `Ctrl+P` must stay
+    // inert rather than open a palette nobody can see or close.
+    let mut model = model_tail_only();
+    press_ctrl(&mut model, 'p');
+    assert!(model.overlay.is_none());
+}
+
+#[test]
+fn palette_workspace_action_is_inert_in_tail_only_mode() {
+    // Regression for the same invisible-overlay hazard, one hop further in:
+    // dispatching `Action::Workspace` under `TailOnly` must not open the
+    // (also invisible) `WorkspacePicker` overlay or issue the `Workspaces`
+    // fetch. `palette::dispatch`'s defense-in-depth copy of the
+    // `tail_only_inert` gate isn't reachable from an integration test, so
+    // this exercises the same gate through the ordinary `w` key instead.
+    let mut model = model_tail_only();
+    let commands = press_key(&mut model, KeyCode::Char('w'));
+    assert!(model.overlay.is_none());
+    assert!(!commands.iter().any(|cmd| matches!(cmd, Cmd::Get(_))));
 }
