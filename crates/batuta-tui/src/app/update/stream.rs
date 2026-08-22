@@ -131,6 +131,7 @@ fn transcript(model: &mut Model, session: &str, event: TranscriptEvent) -> Vec<C
             match detail.transcript.apply_delta(delta.clone()) {
                 Applied::Ok => {
                     detail.view.cache_dirty = true;
+                    super::search::recompute_search(detail);
                     if detail.view.follow {
                         detail.view.selection = detail
                             .transcript
@@ -231,6 +232,7 @@ fn apply_snapshot(
         .flatten();
     detail.transcript.apply_snapshot(snapshot);
     detail.view.cache_dirty = true;
+    super::search::recompute_search(detail);
     if detail.view.follow {
         detail.view.selection = detail
             .transcript

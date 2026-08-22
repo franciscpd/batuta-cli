@@ -537,3 +537,83 @@ fn ut_764_yank_key_copies_selected_transcript_entry() {
     assert_eq!(copied.as_deref(), Some("hello entry"));
     assert!(model.toast.is_some());
 }
+
+fn session_with_entries(texts: &[&str]) -> batuta_tui::Model {
+    let mut model = detail_model("active", false);
+    let entries: Vec<_> = texts
+        .iter()
+        .enumerate()
+        .map(|(index, text)| {
+            serde_json::json!({
+                "start_sequence": index as i64 + 1,
+                "sequence": index as i64 + 1,
+                "message": {
+                    "id": format!("m{index}"),
+                    "role": "assistant",
+                    "parts": [{"type": "text", "text": text}],
+                },
+            })
+        })
+        .collect();
+    let snapshot: TranscriptSnapshot = serde_json::from_value(serde_json::json!({
+        "epoch": 1,
+        "generation": 1,
+        "max_sequence": texts.len() as i64,
+        "entries": entries,
+    }))
+    .unwrap();
+    update(
+        &mut model,
+        Msg::Stream {
+            id: StreamId::Transcript("sess-a".into()),
+            event: AnyStreamEvent::Transcript(TranscriptEvent::Snapshot(snapshot)),
+        },
+    );
+    let detail = model.session_detail_mut().unwrap();
+    detail.view.follow = false;
+    detail.view.selection = 0;
+    model
+}
+
+fn press(model: &mut batuta_tui::Model, c: char) {
+    update(model, key(KeyCode::Char(c)));
+}
+
+fn press_key(model: &mut batuta_tui::Model, code: KeyCode) {
+    update(model, key(code));
+}
+
+fn type_str(model: &mut batuta_tui::Model, s: &str) {
+    for c in s.chars() {
+        press(model, c);
+    }
+}
+
+#[test]
+fn ut_765_search_jumps_and_cycles_matches() {
+    let mut model = session_with_entries(&["alpha", "beta", "alpha two"]);
+    press(&mut model, '/');
+    type_str(&mut model, "alpha");
+    press_key(&mut model, KeyCode::Enter);
+    let view = &model.session_detail().unwrap().view;
+    assert_eq!(view.selection, 0);
+    assert!(!view.follow);
+    press(&mut model, 'n');
+    assert_eq!(model.session_detail().unwrap().view.selection, 2);
+    press(&mut model, 'n'); // wraps
+    assert_eq!(model.session_detail().unwrap().view.selection, 0);
+    press_key(&mut model, KeyCode::Esc);
+    assert!(model.session_detail().unwrap().view.search.is_none());
+}
+
+#[test]
+fn ut_766_search_footer_shows_prompt_then_status() {
+    let mut model = session_with_entries(&["alpha", "beta", "alpha two"]);
+    press(&mut model, '/');
+    type_str(&mut model, "alpha");
+    assert!(render(&model, 100, 30).contains("search: alpha"));
+    press_key(&mut model, KeyCode::Enter);
+    let status_footer = render(&model, 100, 30);
+    assert!(status_footer.contains("search \"alpha\""));
+    assert!(status_footer.contains("1/2"));
+}

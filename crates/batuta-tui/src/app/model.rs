@@ -277,6 +277,17 @@ pub struct TranscriptView {
     pub beginning: bool,
     pub render_cache: HashMap<RenderCacheKey, Text<'static>>,
     pub cache_dirty: bool,
+    pub search: Option<SearchState>,
+}
+
+/// Transcript search: `/` opens the prompt, `Enter` confirms and jumps,
+/// `n`/`N` cycle matches. `matches` holds presentation-row indexes.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct SearchState {
+    pub query: String,
+    pub focused: bool,
+    pub matches: Vec<usize>,
+    pub current: usize,
 }
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq)]
@@ -755,6 +766,9 @@ impl Model {
         self.composer_focused()
             || self.sessions.filter_focused
             || self.runs.filter_focused
+            || self
+                .session_detail()
+                .is_some_and(|detail| detail.view.search.as_ref().is_some_and(|s| s.focused))
             || matches!(
                 &self.overlay,
                 Some(Overlay::Clarify {
@@ -854,6 +868,7 @@ pub fn page_into_detail(detail: &mut SessionDetail, page: TranscriptPage) {
     detail.view.fetching = false;
     detail.view.beginning = !has_older;
     detail.view.cache_dirty = true;
+    crate::app::update::search::recompute_search(detail);
 }
 
 #[cfg(test)]

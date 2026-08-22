@@ -87,13 +87,18 @@ pub const BINDINGS: &[Binding] = &[
     },
     Binding {
         context: Context::SessionDetail,
-        keys: "j/k/PgUp/PgDn/g/G/Enter/t/y",
+        keys: "j/k/PgUp/PgDn/g/G/Enter/t/y/n/N",
         action: "navigate",
     },
     Binding {
         context: Context::SessionDetail,
         keys: "i/Ctrl+X",
         action: "compose/cancel",
+    },
+    Binding {
+        context: Context::SessionDetail,
+        keys: "/",
+        action: "search",
     },
     Binding {
         context: Context::Composer,

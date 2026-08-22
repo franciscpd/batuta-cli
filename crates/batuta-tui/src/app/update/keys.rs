@@ -1,7 +1,7 @@
 use crate::{
     app::model::{
-        Detail, FooterState, Model, Overlay, Panel, StreamStatus, Toast, ToastKind,
-        entry_has_expandable_part,
+        Detail, FooterState, Model, Overlay, Panel, SearchState, SessionDetail, StreamStatus,
+        Toast, ToastKind, entry_has_expandable_part,
     },
     cmd::{Cmd, Request, StreamId, TimerId},
 };
@@ -382,6 +382,30 @@ fn detail_key(model: &mut Model, key: KeyEvent) -> Vec<Cmd> {
             detail.view.cache_dirty = true;
         }
         KeyCode::Char('i') => detail.composer.focused = true,
+        KeyCode::Char('/') => {
+            detail.view.search = Some(SearchState {
+                focused: true,
+                ..Default::default()
+            });
+        }
+        KeyCode::Char('n')
+            if detail
+                .view
+                .search
+                .as_ref()
+                .is_some_and(|search| !search.focused && !search.matches.is_empty()) =>
+        {
+            cycle_search(detail, true);
+        }
+        KeyCode::Char('N')
+            if detail
+                .view
+                .search
+                .as_ref()
+                .is_some_and(|search| !search.focused && !search.matches.is_empty()) =>
+        {
+            cycle_search(detail, false);
+        }
         KeyCode::Char('y') => {
             let entries = detail.transcript.entries();
             let indexes: Vec<usize> = match rows.get(detail.view.selection) {
@@ -432,7 +456,90 @@ fn detail_key(model: &mut Model, key: KeyEvent) -> Vec<Cmd> {
                 detail.composer.focused = true;
             }
         }
-        KeyCode::Esc => return Vec::new(),
+        KeyCode::Esc if detail.view.search.is_some() => {
+            detail.view.search = None;
+        }
+        _ => return Vec::new(),
+    }
+    model.dirty = true;
+    Vec::new()
+}
+
+/// Moves the search cursor to the next (`forward`) or previous match,
+/// wrapping around, and jumps the transcript selection there.
+fn cycle_search(detail: &mut SessionDetail, forward: bool) {
+    let Some(search) = detail.view.search.as_ref() else {
+        return;
+    };
+    if search.matches.is_empty() {
+        return;
+    }
+    let len = search.matches.len();
+    let next_current = if forward {
+        (search.current + 1) % len
+    } else {
+        (search.current + len - 1) % len
+    };
+    let target = search.matches[next_current];
+    if let Some(search) = detail.view.search.as_mut() {
+        search.current = next_current;
+    }
+    detail.view.selection = target;
+    detail.view.follow = false;
+}
+
+/// Jumps to the first match at-or-after the current selection, falling back
+/// to the first match overall. No-op when there are no matches.
+fn confirm_search_jump(detail: &mut SessionDetail) {
+    let Some(search) = detail.view.search.as_ref() else {
+        return;
+    };
+    if search.matches.is_empty() {
+        return;
+    }
+    let current_selection = detail.view.selection;
+    let target = search
+        .matches
+        .iter()
+        .copied()
+        .find(|&index| index >= current_selection)
+        .unwrap_or(search.matches[0]);
+    let current = search
+        .matches
+        .iter()
+        .position(|&index| index == target)
+        .unwrap_or(0);
+    if let Some(search) = detail.view.search.as_mut() {
+        search.current = current;
+    }
+    detail.view.selection = target;
+    detail.view.follow = false;
+}
+
+fn search_key(model: &mut Model, key: KeyEvent) -> Vec<Cmd> {
+    let Some(detail) = model.session_detail_mut() else {
+        return Vec::new();
+    };
+    match key.code {
+        KeyCode::Esc => detail.view.search = None,
+        KeyCode::Enter => {
+            if let Some(search) = detail.view.search.as_mut() {
+                search.focused = false;
+            }
+            confirm_search_jump(detail);
+        }
+        KeyCode::Char(c) => {
+            if let Some(search) = detail.view.search.as_mut() {
+                search.query.push(c);
+            }
+            super::search::recompute_search(detail);
+        }
+        KeyCode::Backspace => {
+            if let Some(search) = detail.view.search.as_mut() {
+                search.query.pop();
+            }
+            super::search::recompute_search(detail);
+        }
         _ => return Vec::new(),
     }
     model.dirty = true;
@@ -475,6 +582,15 @@ fn move_up(model: &mut Model, amount: usize) -> Vec<Cmd> {
 fn text_key(model: &mut Model, key: KeyEvent) -> Vec<Cmd> {
     if matches!(model.overlay, Some(Overlay::Clarify { .. })) {
         return super::clarify::key(model, key);
+    }
+    if model.session_detail().is_some_and(|detail| {
+        detail
+            .view
+            .search
+            .as_ref()
+            .is_some_and(|search| search.focused)
+    }) {
+        return search_key(model, key);
     }
     if model.sessions.filter_focused || model.runs.filter_focused {
         let filtering_sessions = model.sessions.filter_focused;

@@ -9,6 +9,7 @@ mod logs;
 mod picker;
 mod prompt;
 mod runs;
+pub(crate) mod search;
 mod sessions;
 mod stream;
 mod timers;
