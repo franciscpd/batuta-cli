@@ -265,7 +265,7 @@ mod tests {
     }
 
     #[test]
-    fn ut_780_tail_applies_configured_keymap() {
+    fn ut_784_tail_applies_configured_keymap() {
         // `batuta tail` builds its `Model` via `Model::tail` (which starts
         // from `Settings::default()`), not `Settings::tui_settings` — a
         // `[keys]` remap must still reach it via `apply_settings`, or it

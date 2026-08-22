@@ -108,12 +108,16 @@ filter = ["/", "ctrl+f"]   # multiple combos
 ```
 
 A combo spec is `[modifier+]key`, where `modifier` is one of `ctrl`,
-`alt`, `shift` (repeatable, e.g. `"ctrl+shift+p"`), and `key` is either a
+`alt`, `shift` (repeatable, e.g. `"ctrl+alt+p"`), and `key` is either a
 single character (case-sensitive — `"L"` and `"l"` are distinct combos) or
 one of: `tab`, `esc`/`escape`, `enter`/`return`, `space`, `backspace`,
 `up`, `down`, `left`, `right`, `home`, `end`, `pgup`/`pageup`,
 `pgdn`/`pagedown`, `f1`–`f12`. `"shift+tab"` is accepted and normalizes to
-the same combo as a bare `"tab"` reported with a shift modifier.
+the same combo as a bare `"tab"` reported with a shift modifier. `shift`
+combined with a single lowercase letter normalizes to the uppercase
+letter with the shift modifier dropped — e.g. `"shift+q"` is the same
+combo as writing `"Q"` directly, and `"ctrl+shift+p"` is the same combo
+as `"ctrl+P"` — because terminals report Shift+letter that way.
 
 Rebinding an action to a combo that's already used by another action
 steals it from that action; if that action is left with no combos at all,
@@ -164,6 +168,8 @@ These are the defaults. Global and Lists rows are configurable via the
 | Attention | `r` | retry (failure items) |
 | Attention | `Enter` | answer clarification / open context |
 | Session detail | `j` `k` `PgUp` `PgDn` `g` `G` `Enter` `t` | as `tail` |
+| Session detail | `/`, `n`, `N` | search transcript / next / previous match |
+| Session detail | `y` | yank selected entry |
 | Session detail | `a` `x` `A` `X` | verbs on the selected permission card |
 | Session detail | `i` or `Enter` on the composer line | focus composer |
 | Session detail | `Ctrl+X` | cancel current turn (confirm) |

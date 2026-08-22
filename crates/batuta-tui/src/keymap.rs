@@ -370,6 +370,16 @@ pub fn parse_combo(spec: &str) -> Result<KeyCombo, String> {
             };
             if ch.is_ascii_uppercase() {
                 combo.modifiers.remove(KeyModifiers::SHIFT);
+            } else if ch.is_ascii_lowercase() && combo.modifiers.contains(KeyModifiers::SHIFT) {
+                // `normalize_event` turns a real Shift+<letter> press into
+                // `Char(<UPPERCASE>)` with `SHIFT` stripped (crossterm
+                // reports it that way), so a spec like `"shift+q"` — which
+                // would otherwise parse to `Char('q')` + `SHIFT` — could
+                // never match. Uppercase the char and drop `SHIFT` here so
+                // the parsed combo is symmetric with what a real keypress
+                // normalizes to.
+                combo.code = KeyCode::Char(ch.to_ascii_uppercase());
+                combo.modifiers.remove(KeyModifiers::SHIFT);
             }
             return Ok(combo);
         }
@@ -988,6 +998,25 @@ mod tests {
         assert_eq!(parse_combo("f1").unwrap().code, KeyCode::F(1));
         assert_eq!(parse_combo("pgdn").unwrap().code, KeyCode::PageDown);
         assert!(parse_combo("meh").is_err());
+    }
+
+    #[test]
+    fn ut_785_parse_combo_shift_letter_normalizes_to_uppercase() {
+        // crossterm reports a real Shift+q press as `Char('Q')` with
+        // `SHIFT` already stripped by `normalize_event` (see below), so a
+        // spec of `"shift+q"` must parse to that same shape — not to
+        // `Char('q')` + `SHIFT`, which `normalize_event`'s output could
+        // never match.
+        let combo = parse_combo("shift+q").unwrap();
+        assert_eq!(
+            combo,
+            KeyCombo {
+                code: KeyCode::Char('Q'),
+                modifiers: KeyModifiers::NONE,
+            }
+        );
+        let real_press = KeyEvent::new(KeyCode::Char('Q'), KeyModifiers::SHIFT);
+        assert_eq!(normalize_event(&real_press), combo);
     }
 
     #[test]

@@ -403,6 +403,7 @@ fn detail_key(model: &mut Model, key: KeyEvent) -> Vec<Cmd> {
             .map_or(1, |detail| detail.view.visible_height);
         return move_up(model, amount);
     }
+    let tail_only = model.mode == AppMode::TailOnly;
     let Some(detail) = model.session_detail_mut() else {
         return Vec::new();
     };
@@ -472,31 +473,39 @@ fn detail_key(model: &mut Model, key: KeyEvent) -> Vec<Cmd> {
             super::search::recompute_search(detail);
         }
         KeyCode::Char('i') => detail.composer.focused = true,
-        KeyCode::Char('/') => {
+        // `/`, `n`, `N`, and `y` are gated to non-`TailOnly` modes: `tail`
+        // mode never renders `session::footer` (`views/mod.rs` early-returns
+        // `tail::view`), so there is no visual cue that `/` opened a search
+        // prompt. Once opened, `text_field_focused()` swallows every
+        // keystroke — including `q` — silently breaking quit. Mirrors the
+        // `tail_only_inert` gate above for panel-focus actions.
+        KeyCode::Char('/') if !tail_only => {
             detail.view.search = Some(SearchState {
                 focused: true,
                 ..Default::default()
             });
         }
         KeyCode::Char('n')
-            if detail
-                .view
-                .search
-                .as_ref()
-                .is_some_and(|search| !search.focused && !search.matches.is_empty()) =>
+            if !tail_only
+                && detail
+                    .view
+                    .search
+                    .as_ref()
+                    .is_some_and(|search| !search.focused && !search.matches.is_empty()) =>
         {
             cycle_search(detail, true);
         }
         KeyCode::Char('N')
-            if detail
-                .view
-                .search
-                .as_ref()
-                .is_some_and(|search| !search.focused && !search.matches.is_empty()) =>
+            if !tail_only
+                && detail
+                    .view
+                    .search
+                    .as_ref()
+                    .is_some_and(|search| !search.focused && !search.matches.is_empty()) =>
         {
             cycle_search(detail, false);
         }
-        KeyCode::Char('y') => {
+        KeyCode::Char('y') if !tail_only => {
             let entries = detail.transcript.entries();
             let indexes: Vec<usize> = match rows.get(detail.view.selection) {
                 Some(crate::transcript::PresentationRow::Entry { entry_index }) => {
