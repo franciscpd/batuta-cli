@@ -587,7 +587,7 @@ mod tests {
     }
 
     #[test]
-    fn ut_774_keys_table_resolves_rebinds_and_warns_on_unknown_action_or_bad_combo() {
+    fn ut_778_keys_table_resolves_rebinds_and_warns_on_unknown_action_or_bad_combo() {
         let temp = tempdir().unwrap();
         let path = temp.path().join("config.toml");
         fs::write(
