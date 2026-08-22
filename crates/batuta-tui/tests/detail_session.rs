@@ -617,3 +617,67 @@ fn ut_766_search_footer_shows_prompt_then_status() {
     assert!(status_footer.contains("search \"alpha\""));
     assert!(status_footer.contains("1/2"));
 }
+
+#[test]
+fn ut_767_raw_debug_toggle_recomputes_search_matches() {
+    let mut model = detail_model("active", false);
+    let snapshot: TranscriptSnapshot = serde_json::from_value(serde_json::json!({
+        "epoch": 1,
+        "generation": 1,
+        "max_sequence": 4,
+        "entries": [
+            {"start_sequence": 1, "sequence": 1, "message": {"id": "m1", "role": "assistant", "parts": [{"type": "text", "text": "target"}]}},
+            {"start_sequence": 2, "sequence": 2, "message": {"id": "m2", "role": "assistant", "parts": [{"type": "tool-read", "state": "completed"}]}},
+            {"start_sequence": 3, "sequence": 3, "message": {"id": "m3", "role": "assistant", "parts": [{"type": "tool-read", "state": "completed"}]}},
+            {"start_sequence": 4, "sequence": 4, "message": {"id": "m4", "role": "assistant", "parts": [{"type": "text", "text": "other search hit"}]}}
+        ]
+    }))
+    .unwrap();
+    update(
+        &mut model,
+        Msg::Stream {
+            id: StreamId::Transcript("sess-a".into()),
+            event: AnyStreamEvent::Transcript(TranscriptEvent::Snapshot(snapshot)),
+        },
+    );
+    let detail = model.session_detail_mut().unwrap();
+    detail.view.follow = false;
+    detail.view.selection = 0;
+    assert!(!detail.view.raw_debug);
+    // Grouped presentation (raw_debug = false) has 3 rows: the text entry,
+    // the grouped pair of "read" tool entries, and the trailing text entry.
+    assert_eq!(detail.transcript.presentation_rows(false).len(), 3);
+    assert_eq!(detail.transcript.presentation_rows(true).len(), 4);
+
+    press(&mut model, '/');
+    type_str(&mut model, "other");
+    press_key(&mut model, KeyCode::Enter);
+    {
+        let search = model
+            .session_detail()
+            .unwrap()
+            .view
+            .search
+            .as_ref()
+            .unwrap();
+        // Grouped layout: row 2 is the trailing "other search hit" entry.
+        assert_eq!(search.matches, vec![2]);
+    }
+    assert_eq!(model.session_detail().unwrap().view.selection, 2);
+
+    press(&mut model, 'D');
+
+    assert!(model.session_detail().unwrap().view.raw_debug);
+    let search = model
+        .session_detail()
+        .unwrap()
+        .view
+        .search
+        .as_ref()
+        .unwrap();
+    // Raw layout has one row per entry, so the match must be recomputed to
+    // row 3 (the fourth entry) rather than left stale at row 2 (which is
+    // now the second grouped "read" tool entry and does not match "other").
+    assert_eq!(search.matches, vec![3]);
+    assert_eq!(search.current, 0);
+}

@@ -380,6 +380,7 @@ fn detail_key(model: &mut Model, key: KeyEvent) -> Vec<Cmd> {
                 })
                 .unwrap_or_else(|| detail.view.selection.min(rows.len().saturating_sub(1)));
             detail.view.cache_dirty = true;
+            super::search::recompute_search(detail);
         }
         KeyCode::Char('i') => detail.composer.focused = true,
         KeyCode::Char('/') => {
