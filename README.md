@@ -9,9 +9,22 @@ Status: beta.
 
 # Install
 
-Install from this repository with Cargo:
+Prebuilt binaries (Linux x86_64, macOS x86_64/arm64) are attached to each
+[GitHub Release](https://github.com/franciscpd/batuta-cli/releases), with
+SHA-256 checksum sidecars:
 
 ```console
+curl -LO https://github.com/franciscpd/batuta-cli/releases/latest/download/batuta-x86_64-unknown-linux-gnu.tar.xz
+curl -LO https://github.com/franciscpd/batuta-cli/releases/latest/download/batuta-x86_64-unknown-linux-gnu.tar.xz.sha256
+sha256sum -c batuta-x86_64-unknown-linux-gnu.tar.xz.sha256
+tar -xf batuta-x86_64-unknown-linux-gnu.tar.xz
+```
+
+Or build from source:
+
+```console
+cargo install --git https://github.com/franciscpd/batuta-cli batuta
+# or, from a checkout:
 cargo install --path crates/batuta
 ```
 
