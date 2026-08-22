@@ -4,7 +4,7 @@ use crate::{
 };
 use batuta_tui::{
     app::{ColorDepthMode, ColorMode, Preset, Settings as TuiSettings, ThemeMode, UiSettings},
-    keymap::{self, Keymap},
+    keymap::{self, ContextGroup, Keymap},
     theme::ColorDepth,
 };
 use serde::Deserialize;
@@ -308,8 +308,11 @@ pub fn resolve(cli: &Cli, env: &Env, file: Option<ConfigFile>) -> Result<Setting
 /// `Keymap::default()` and applying each entry as a `rebind`. Unknown
 /// action names and unparsable combo specs warn and are skipped rather
 /// than failing config load; a rebind that steals a combo from another
-/// action's only binding also warns (see `Keymap::rebind`).
+/// action's only binding also warns (see `Keymap::rebind`). After every
+/// entry is applied, `warn_new_collisions` checks the result for combos
+/// that now do something ambiguous the shipped defaults never did.
 fn resolve_keymap(keys: toml::Table, warnings: &mut Vec<String>) -> Keymap {
+    let default_global = Keymap::default().bound_combos(ContextGroup::Global);
     let mut keymap = Keymap::default();
     for (name, value) in keys {
         let Some(action) = keymap::action_by_name(&name) else {
@@ -350,7 +353,57 @@ fn resolve_keymap(keys: toml::Table, warnings: &mut Vec<String>) -> Keymap {
             warnings.extend(keymap.rebind(action, combos));
         }
     }
+    warn_new_collisions(&keymap, &default_global, warnings);
     keymap
+}
+
+/// Warns about combos that only became ambiguous because of this config
+/// (never about the shipped defaults, some of which intentionally reuse a
+/// combo across groups that are actually mutually exclusive at dispatch
+/// time — see `key()`'s Global-lookup doc comment and
+/// `keymap::reserved_combos`).
+///
+/// Two hazards, both because `key()` checks the `Global` keymap before
+/// anything else reachable at that point in the dispatch order:
+/// - A combo bound in both `Global` and `Lists` — the `Lists` action
+///   becomes unreachable; `Global` always wins.
+/// - A `Global` combo that collides with a hardcoded, non-remappable
+///   context's key (Attention/Session detail/Run detail/etc., or the
+///   `Ctrl+C` quit-guard) — the hardcoded handler becomes unreachable for
+///   that combo while `Global`'s lookup runs first.
+///
+/// Warning only, per the config's warn-don't-crash convention: neither
+/// hazard blocks config load or is auto-resolved differently.
+fn warn_new_collisions(
+    keymap: &Keymap,
+    default_global: &std::collections::HashSet<keymap::KeyCombo>,
+    warnings: &mut Vec<String>,
+) {
+    let global = keymap.bound_combos(ContextGroup::Global);
+    let lists = keymap.bound_combos(ContextGroup::Lists);
+    let mut cross_group: Vec<String> = global
+        .intersection(&lists)
+        .map(keymap::combo_display)
+        .collect();
+    cross_group.sort();
+    for combo in cross_group {
+        warnings.push(format!(
+            "config: keys: `{combo}` is bound in both a Global and a Lists action — Global always wins, the Lists action is unreachable for it"
+        ));
+    }
+
+    let reserved = keymap::reserved_combos();
+    let mut shadowed: Vec<String> = global
+        .difference(default_global)
+        .filter(|combo| reserved.contains(combo))
+        .map(keymap::combo_display)
+        .collect();
+    shadowed.sort();
+    for combo in shadowed {
+        warnings.push(format!(
+            "config: keys: Global combo `{combo}` shadows a hardcoded key in a non-remappable context (e.g. Attention, Session detail, Run detail) — that context's binding is unreachable for it"
+        ));
+    }
 }
 
 fn parse_transport(value: Option<&str>) -> Option<DaemonArg> {
@@ -633,6 +686,57 @@ mod tests {
                 .warnings
                 .iter()
                 .any(|warning| warning.contains("keys.refresh"))
+        );
+    }
+
+    #[test]
+    fn ut_781_keys_table_warns_on_cross_group_and_reserved_collisions() {
+        let temp = tempdir().unwrap();
+        let path = temp.path().join("config.toml");
+        // `filter` (Lists) stolen by `q` — Global's `quit` already owns
+        // `q`, so `filter` becomes unreachable (Global is checked first).
+        // `workspace` (Global) rebound to `a`, colliding with Attention's
+        // hardcoded `a` (approve) — a genuinely new overlap, not one of
+        // the shipped defaults' safe (dispatch-gated) reuses.
+        fs::write(&path, "[keys]\nfilter = 'q'\nworkspace = 'a'\n").unwrap();
+        let mut value = cli();
+        value.config = Some(path);
+        let settings = load_and_resolve(&value, &Env::default()).unwrap();
+
+        assert!(
+            settings.warnings.iter().any(|warning| {
+                warning.contains("`q`") && warning.contains("both a Global and a Lists action")
+            }),
+            "expected a cross-group collision warning, got: {:?}",
+            settings.warnings
+        );
+        assert!(
+            settings.warnings.iter().any(|warning| {
+                warning.contains("`a`") && warning.contains("shadows a hardcoded key")
+            }),
+            "expected a reserved-combo shadow warning, got: {:?}",
+            settings.warnings
+        );
+    }
+
+    #[test]
+    fn ut_782_default_keys_table_never_warns_about_collisions() {
+        // The shipped defaults reuse a few combos across Global and a
+        // hardcoded context (e.g. `logs` = `L`, which the Logs overlay
+        // also reads to close) — those are safe because the earlier
+        // handler is checked first in `key()`, and must never warn on
+        // their own.
+        let temp = tempdir().unwrap();
+        let mut value = cli();
+        value.config = Some(temp.path().join("missing.toml"));
+        let settings = load_and_resolve(&value, &Env::default()).unwrap();
+        assert!(
+            settings
+                .warnings
+                .iter()
+                .all(|warning| !warning.contains("collision") && !warning.contains("shadows")),
+            "unexpected collision warning with no [keys] table: {:?}",
+            settings.warnings
         );
     }
 

@@ -6,7 +6,8 @@ use crate::{
     probe, version, workspace,
 };
 use batuta_tui::{
-    app::{ColorMode, FooterState, Model, Preset, SessionHeader, UiSettings},
+    app::{ColorMode, FooterState, Model, Preset, SessionHeader, Toast, ToastKind, UiSettings},
+    keymap::Keymap,
     theme::Theme,
 };
 use compozy_client::{
@@ -104,13 +105,26 @@ async fn run_terminal(
             detail: stop_detail,
         };
     }
-    apply_settings(&mut model, settings.preset.clone(), settings.ui.clone());
+    apply_settings(
+        &mut model,
+        settings.preset.clone(),
+        settings.ui.clone(),
+        settings.keymap.clone(),
+    );
+    if let Some(warning) = settings.warnings.first() {
+        model.toast = Some(Toast {
+            kind: ToastKind::Info,
+            text: format!("warning: {warning}"),
+            sticky: true,
+        });
+    }
     app::run_model(model, client).await
 }
 
-fn apply_settings(model: &mut Model, preset: Preset, ui: UiSettings) {
+fn apply_settings(model: &mut Model, preset: Preset, ui: UiSettings, keymap: Keymap) {
     model.settings.preset = preset;
     model.settings.ui = ui;
+    model.settings.keymap = keymap;
     let depth = resolve_color_depth(
         model.settings.ui.color_depth,
         std::env::var("COLORTERM").ok().as_deref(),
@@ -241,11 +255,33 @@ mod tests {
         ui.color = ColorMode::Never;
         ui.theme = ThemeMode::Light;
         let preset = model.settings.preset.clone();
+        let keymap = model.settings.keymap.clone();
 
-        apply_settings(&mut model, preset, ui);
+        apply_settings(&mut model, preset, ui, keymap);
 
         assert!(!model.theme.color);
         assert_eq!(model.theme.variant, ThemeVariant::Light);
         assert!(model.session_detail().unwrap().view.cache_dirty);
+    }
+
+    #[test]
+    fn ut_780_tail_applies_configured_keymap() {
+        // `batuta tail` builds its `Model` via `Model::tail` (which starts
+        // from `Settings::default()`), not `Settings::tui_settings` — a
+        // `[keys]` remap must still reach it via `apply_settings`, or it
+        // silently does nothing in tail mode while working in the full
+        // TUI. Regression test for that gap.
+        let mut model = Model::tail(SessionHeader::default());
+        let preset = model.settings.preset.clone();
+        let ui = model.settings.ui.clone();
+        let mut keymap = batuta_tui::keymap::Keymap::default();
+        keymap.rebind(
+            batuta_tui::keymap::Action::Quit,
+            vec![batuta_tui::keymap::parse_combo("x").unwrap()],
+        );
+
+        apply_settings(&mut model, preset, ui, keymap.clone());
+
+        assert_eq!(model.settings.keymap, keymap);
     }
 }

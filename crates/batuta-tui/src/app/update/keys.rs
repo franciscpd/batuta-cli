@@ -54,6 +54,13 @@ pub(super) fn key(model: &mut Model, key: KeyEvent) -> Vec<Cmd> {
     if model.text_field_focused() {
         return text_key(model, key);
     }
+    // `Keymap::action` matches modifiers exactly (bar the crossterm
+    // Shift+Tab/BackTab normalization — see `keymap::normalize_event`).
+    // This intentionally narrows some pre-keymap behavior, where matching
+    // on `key.code` alone let e.g. `Alt+q`/`Ctrl+j` also fire the plain
+    // `q`/`j` action; exact matching is the correct contract for a
+    // configurable keymap; the looser matching it replaced was accidental
+    // rather than deliberate.
     if let Some(action) = model.settings.keymap.action(ContextGroup::Global, &key) {
         // `TailOnly` mode hides Sessions/Runs/Attention entirely, so the
         // panel-focus-changing actions are inert there — mirror the old

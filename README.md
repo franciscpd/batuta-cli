@@ -133,6 +133,11 @@ Action names (Lists): `move_down`, `move_up`, `page_down`, `page_up`,
 `Ctrl+C` always quits (with the same draft-loss guard as `q`) and cannot
 be remapped or unbound — it stays available even if `quit` is misconfigured.
 
+Combos match modifiers exactly (this is the configurable-keymap contract,
+not an accident): binding `filter` to `/` matches a plain `/` only, so an
+`Alt`- or `Ctrl`-decorated variant of a combo no longer falls through to
+the plain action the way earlier, hardcoded key handling sometimes did.
+
 # Keys
 
 These are the defaults. Global and Lists rows are configurable via the

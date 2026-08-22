@@ -1,5 +1,5 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Context {
@@ -440,6 +440,16 @@ impl Keymap {
         reverse.get(&action).cloned().unwrap_or_default()
     }
 
+    /// All combos currently bound to any action in `group`. Used by
+    /// config-resolution to detect cross-group and hardcoded-context
+    /// collisions (see `reserved_combos`).
+    pub fn bound_combos(&self, group: ContextGroup) -> HashSet<KeyCombo> {
+        match group {
+            ContextGroup::Global => self.global_forward.keys().copied().collect(),
+            ContextGroup::Lists => self.lists_forward.keys().copied().collect(),
+        }
+    }
+
     /// Replaces `action`'s combos with `combos`, stealing any of them from
     /// whichever action currently owns them. Returns a warning for every
     /// victim action left with no combos at all. Duplicate combos in the
@@ -590,7 +600,7 @@ impl Default for Keymap {
 
 /// Renders a combo for display, e.g. `Ctrl+C`, `Shift+Tab`, `↑`, `PgDn`,
 /// `F1`, `q`.
-fn combo_display(combo: &KeyCombo) -> String {
+pub fn combo_display(combo: &KeyCombo) -> String {
     let mut prefix = String::new();
     if combo.modifiers.contains(KeyModifiers::CONTROL) {
         prefix.push_str("Ctrl+");
@@ -621,6 +631,107 @@ fn combo_display(combo: &KeyCombo) -> String {
         other => format!("{other:?}"),
     };
     format!("{prefix}{body}")
+}
+
+/// Key combos hardcoded by the non-remappable contexts (Attention,
+/// Session detail, Composer, Run detail, Overlays, Logs, Chooser — every
+/// `Context` other than `Global`/`Lists`/`Sessions`), plus `Ctrl+C`
+/// (the quit-guard shortcut, which sits ahead of the keymap lookup in
+/// `key()` and is never expressed as a `Binding` row since it isn't part
+/// of the `Action` system at all). Derived from `BINDINGS`' display text
+/// so it can't drift from the docs table.
+///
+/// Used by config resolution to warn when a `[keys]` remap introduces a
+/// combo that a hardcoded handler already reads for a non-remappable
+/// context. Only newly *introduced* overlaps matter in practice: the
+/// shipped defaults deliberately reuse a few of these combos, safely,
+/// because the hardcoded handlers that own them run before the keymap
+/// lookup ever sees the key (e.g. the default `logs` action is bound to
+/// `L`, which the Logs overlay itself also reads to close — never a
+/// conflict, since `key()` dispatches an open overlay before consulting
+/// the Global keymap at all).
+pub fn reserved_combos() -> HashSet<KeyCombo> {
+    let mut reserved: HashSet<KeyCombo> = BINDINGS
+        .iter()
+        .filter(|binding| {
+            !matches!(
+                binding.context,
+                Context::Global | Context::Lists | Context::Sessions
+            )
+        })
+        .flat_map(|binding| parse_display_tokens(binding.keys))
+        .collect();
+    reserved.insert(combo(KeyCode::Char('c'), KeyModifiers::CONTROL));
+    reserved
+}
+
+/// Parses a `/`-separated `Binding.keys` display string (e.g.
+/// `"a/A/x/X/r/Enter/o"`, `"j/k/1-9/Enter/Esc"`) into the combos it
+/// documents. Best-effort: an unrecognized token is silently skipped
+/// rather than erroring, since this only feeds a warning heuristic.
+fn parse_display_tokens(text: &str) -> Vec<KeyCombo> {
+    let mut combos = Vec::new();
+    for token in text.split('/') {
+        if let Some(range) = parse_digit_range(token) {
+            combos.extend(range);
+            continue;
+        }
+        if let Some(parsed) = parse_display_token(token) {
+            combos.push(parsed);
+        }
+    }
+    combos
+}
+
+/// Parses a digit range like `"1-9"` or `"1-4"` into one combo per digit.
+fn parse_digit_range(token: &str) -> Option<Vec<KeyCombo>> {
+    let (start, end) = token.split_once('-')?;
+    let start = start.trim().parse::<u8>().ok()?;
+    let end = end.trim().parse::<u8>().ok()?;
+    if start > end || end - start > 9 {
+        return None;
+    }
+    Some(
+        (start..=end)
+            .map(|digit| combo(KeyCode::Char((b'0' + digit) as char), KeyModifiers::NONE))
+            .collect(),
+    )
+}
+
+/// Parses one `+`-joined display token, e.g. `"Ctrl+X"`, `"Alt+Enter"`,
+/// `"PgUp"`, `"y"`. Unlike `parse_combo` (the user-facing config
+/// grammar), this lowercases a single-letter key when `Ctrl` is present —
+/// crossterm always reports `Ctrl+<letter>` as the lowercase char, so
+/// `"Ctrl+X"` in a `Binding`'s display text (kept uppercase for
+/// readability) must resolve to the same combo as the real key event.
+fn parse_display_token(token: &str) -> Option<KeyCombo> {
+    let parts: Vec<&str> = token.split('+').filter(|part| !part.is_empty()).collect();
+    let (key, mods) = parts.split_last()?;
+    let mut modifiers = KeyModifiers::NONE;
+    for part in mods {
+        match *part {
+            "Ctrl" => modifiers.insert(KeyModifiers::CONTROL),
+            "Alt" => modifiers.insert(KeyModifiers::ALT),
+            "Shift" => modifiers.insert(KeyModifiers::SHIFT),
+            _ => return None,
+        }
+    }
+    let code = match *key {
+        "Enter" => KeyCode::Enter,
+        "Esc" => KeyCode::Esc,
+        "Tab" => KeyCode::Tab,
+        "PgUp" => KeyCode::PageUp,
+        "PgDn" => KeyCode::PageDown,
+        _ if key.chars().count() == 1 => {
+            let mut ch = key.chars().next().expect("checked len");
+            if modifiers.contains(KeyModifiers::CONTROL) {
+                ch = ch.to_ascii_lowercase();
+            }
+            KeyCode::Char(ch)
+        }
+        _ => return None,
+    };
+    Some(KeyCombo { code, modifiers })
 }
 
 fn joined_combos(keymap: &Keymap, action: Action) -> String {
@@ -917,5 +1028,34 @@ mod tests {
         let via_tab = normalize_event(&KeyEvent::new(KeyCode::Tab, KeyModifiers::SHIFT));
         let via_backtab = normalize_event(&KeyEvent::new(KeyCode::BackTab, KeyModifiers::NONE));
         assert_eq!(via_tab, via_backtab);
+    }
+
+    #[test]
+    fn ut_779_reserved_combos_cover_hardcoded_contexts_and_ctrl_c() {
+        let reserved = reserved_combos();
+        // Attention's `a` (approve) and Ctrl+C (quit-guard) are both
+        // hardcoded outside the Global/Lists keymap.
+        assert!(reserved.contains(&combo(KeyCode::Char('a'), KeyModifiers::NONE)));
+        assert!(reserved.contains(&combo(KeyCode::Char('c'), KeyModifiers::CONTROL)));
+        // "Ctrl+X" in SessionDetail's display text must resolve to the
+        // real (lowercase) physical combo, not the display capitalization.
+        assert!(reserved.contains(&combo(KeyCode::Char('x'), KeyModifiers::CONTROL)));
+        // Chooser's "1-9" range expands to individual digit combos.
+        assert!(reserved.contains(&combo(KeyCode::Char('5'), KeyModifiers::NONE)));
+        // Global/Lists/Sessions rows never contribute (those are the
+        // remappable groups, not hardcoded reserves).
+        assert!(!reserved.contains(&combo(KeyCode::Char('w'), KeyModifiers::NONE)));
+    }
+
+    #[test]
+    fn ut_780_default_keymap_never_collides_across_groups_or_with_reserved_beyond_documented_overlap()
+     {
+        let keymap = Keymap::default();
+        let global = keymap.bound_combos(ContextGroup::Global);
+        let lists = keymap.bound_combos(ContextGroup::Lists);
+        assert!(
+            global.is_disjoint(&lists),
+            "Global and Lists defaults must never collide (Global is checked first)"
+        );
     }
 }
