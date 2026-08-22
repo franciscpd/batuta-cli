@@ -15,6 +15,7 @@ SHA-256 checksum sidecars. While releases are betas, pick the newest tag from
 the releases page:
 
 ```console
+# replace v0.1.0-beta.5 with the newest tag from the releases page
 curl -LO https://github.com/franciscpd/batuta-cli/releases/download/v0.1.0-beta.5/batuta-x86_64-unknown-linux-gnu.tar.xz
 curl -LO https://github.com/franciscpd/batuta-cli/releases/download/v0.1.0-beta.5/batuta-x86_64-unknown-linux-gnu.tar.xz.sha256
 sha256sum -c batuta-x86_64-unknown-linux-gnu.tar.xz.sha256
