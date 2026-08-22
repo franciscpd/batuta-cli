@@ -1,6 +1,7 @@
 use crate::{
     app::composer::ComposerState,
     cmd::{Cmd, LogScope, Request, RequestId, StreamId, TimerId},
+    keymap::Keymap,
     theme::{Theme, ThemeVariant},
     transcript::TranscriptState,
 };
@@ -135,6 +136,7 @@ pub struct Settings {
     pub preset: Preset,
     pub ui: UiSettings,
     pub workspace: Option<WorkspaceRef>,
+    pub keymap: Keymap,
 }
 impl Default for Settings {
     fn default() -> Self {
@@ -146,6 +148,7 @@ impl Default for Settings {
                 name: "workspace".into(),
                 root_dir: String::new(),
             }),
+            keymap: Keymap::default(),
         }
     }
 }

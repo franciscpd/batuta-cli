@@ -82,12 +82,61 @@ fps = 30                  # render tick, clamped 5..60
 sessions_limit = 50       # rows requested for [1] (1..100)
 runs_limit = 50           # rows requested for [2]
 notify = true             # bell + OSC 9 when unfocused and attention arrives
+
+[keys]                    # optional remaps — see "Keys" below
+# quit = "x"
+# filter = ["/", "ctrl+f"]
 ```
 
 Precedence is flags, environment, file, then defaults. `doctor` reports the
 resolved config path and whether it was loaded.
 
+## `[keys]`
+
+Global and Lists keybindings (the two tables below) can be remapped via an
+optional `[keys]` table. Other contexts (Attention, Session detail,
+Composer, Run detail, Overlays, Logs, Chooser) are not remappable — they
+carry text input and modal semantics where remapping risks lockout.
+
+Each entry is `action_name = "combo"` or `action_name = ["combo", ...]`
+for multiple combos bound to the same action:
+
+```toml
+[keys]
+quit = "x"                 # single combo
+filter = ["/", "ctrl+f"]   # multiple combos
+```
+
+A combo spec is `[modifier+]key`, where `modifier` is one of `ctrl`,
+`alt`, `shift` (repeatable, e.g. `"ctrl+shift+p"`), and `key` is either a
+single character (case-sensitive — `"L"` and `"l"` are distinct combos) or
+one of: `tab`, `esc`/`escape`, `enter`/`return`, `space`, `backspace`,
+`up`, `down`, `left`, `right`, `home`, `end`, `pgup`/`pageup`,
+`pgdn`/`pagedown`, `f1`–`f12`. `"shift+tab"` is accepted and normalizes to
+the same combo as a bare `"tab"` reported with a shift modifier.
+
+Rebinding an action to a combo that's already used by another action
+steals it from that action; if that action is left with no combos at all,
+config loading warns `action <name> left unbound` (`doctor` and startup
+warnings surface this the same way as other config warnings). An unknown
+action name or an unparsable combo spec also warns and is skipped, rather
+than failing config load.
+
+Action names (Global): `focus_sessions`, `focus_runs`, `focus_attention`,
+`focus_detail`, `next_panel`, `previous_panel`, `workspace`, `logs`,
+`help`, `quit`, `palette` (unbound by default in this release).
+
+Action names (Lists): `move_down`, `move_up`, `page_down`, `page_up`,
+`top`, `bottom`, `open`, `filter`, `toggle_scope`, `refresh`, `yank`,
+`new_session` (Sessions panel only, regardless of remap).
+
+`Ctrl+C` always quits (with the same draft-loss guard as `q`) and cannot
+be remapped or unbound — it stays available even if `quit` is misconfigured.
+
 # Keys
+
+These are the defaults. Global and Lists rows are configurable via the
+`[keys]` config table documented above.
 
 | Context | Key | Action |
 | --- | --- | --- |
@@ -102,6 +151,7 @@ resolved config path and whether it was loaded.
 | Lists | `/` | filter (type, `Enter` keep, `Esc` clear) |
 | Lists | `*` | toggle preset filter (all agents / all loops) |
 | Lists | `r` | refresh now |
+| Lists | `y` | yank selected id |
 | Sessions | `n` | new session with preset agent |
 | Attention | `a` `x` `A` `X` | permission verbs (task items: `a` approve, `x` reject) |
 | Attention | `r` | retry (failure items) |

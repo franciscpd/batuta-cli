@@ -51,7 +51,11 @@ pub fn render(model: &Model, frame: &mut Frame<'_>) {
         return;
     }
     let (title, text, scroll) = match overlay {
-        Overlay::Help { scroll } => ("help".to_owned(), keymap::help_lines().join("\n"), *scroll),
+        Overlay::Help { scroll } => (
+            "help".to_owned(),
+            keymap::help_lines(&model.settings.keymap).join("\n"),
+            *scroll,
+        ),
         Overlay::WorkspaceOnboarding {
             candidate,
             confirming,

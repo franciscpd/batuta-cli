@@ -1,9 +1,10 @@
 use crate::{
     app::model::{
-        Detail, FooterState, Model, Overlay, Panel, SearchState, SessionDetail, StreamStatus,
-        Toast, ToastKind, entry_has_expandable_part,
+        AppMode, Detail, FooterState, Model, Overlay, Panel, SearchState, SessionDetail,
+        StreamStatus, Toast, ToastKind, entry_has_expandable_part,
     },
     cmd::{Cmd, Request, StreamId, TimerId},
+    keymap::{Action, ContextGroup},
 };
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use std::time::Duration;
@@ -53,53 +54,86 @@ pub(super) fn key(model: &mut Model, key: KeyEvent) -> Vec<Cmd> {
     if model.text_field_focused() {
         return text_key(model, key);
     }
-    if key.code == KeyCode::F(1) || key.code == KeyCode::Char('?') {
-        model.overlay = Some(Overlay::Help { scroll: 0 });
-        model.dirty = true;
-        return Vec::new();
+    if let Some(action) = model.settings.keymap.action(ContextGroup::Global, &key) {
+        // `TailOnly` mode hides Sessions/Runs/Attention entirely, so the
+        // panel-focus-changing actions are inert there — mirror the old
+        // hardcoded `if TailOnly { return detail_key(...) }` gate that used
+        // to sit above the Tab/digit/w match. Quit/Logs/Help stay reachable
+        // regardless of mode, exactly as they were before this action was
+        // extracted from a dedicated hardcoded check.
+        if model.mode == AppMode::TailOnly
+            && matches!(
+                action,
+                Action::FocusSessions
+                    | Action::FocusRuns
+                    | Action::FocusAttention
+                    | Action::FocusDetail
+                    | Action::NextPanel
+                    | Action::PreviousPanel
+                    | Action::Workspace
+            )
+        {
+            return detail_key(model, key);
+        }
+        return apply_global_action(model, action);
     }
-    if key.code == KeyCode::Char('q') {
-        return guarded_quit(model);
-    }
-    if key.code == KeyCode::Char('L') {
-        return super::logs::open(model);
-    }
-    if model.mode == crate::app::model::AppMode::TailOnly {
+    if model.mode == AppMode::TailOnly {
         return detail_key(model, key);
     }
-    match key.code {
-        KeyCode::Tab => {
-            model.focus = if key.modifiers.contains(KeyModifiers::SHIFT) {
-                model.focus.previous()
-            } else {
-                model.focus.next()
-            };
-            focus_changed(model)
-        }
-        KeyCode::BackTab => {
-            model.focus = model.focus.previous();
-            focus_changed(model)
-        }
-        KeyCode::Char('1' | '2' | '3' | '4') => {
-            model.focus = match key.code {
-                KeyCode::Char('1') => Panel::Sessions,
-                KeyCode::Char('2') => Panel::Runs,
-                KeyCode::Char('3') => Panel::Attention,
-                _ => Panel::Detail,
-            };
-            focus_changed(model)
-        }
-        KeyCode::Char('w') => super::picker::open(model, false),
-        _ => match model.focus {
-            Panel::Sessions | Panel::Runs | Panel::Attention => list_key(model, key),
-            Panel::Detail => detail_key(model, key),
-        },
+    match model.focus {
+        Panel::Sessions | Panel::Runs | Panel::Attention => list_key(model, key),
+        Panel::Detail => detail_key(model, key),
     }
 }
 
 fn focus_changed(model: &mut Model) -> Vec<Cmd> {
     model.dirty = true;
     Vec::new()
+}
+
+/// Global-context action handlers, extracted mechanically from the old
+/// `match key.code { ... }` block in `key()`. Each arm is the exact former
+/// arm body; only the trigger (a remappable `Action` instead of a literal
+/// `KeyCode`) changed.
+pub(super) fn apply_global_action(model: &mut Model, action: Action) -> Vec<Cmd> {
+    match action {
+        Action::NextPanel => {
+            model.focus = model.focus.next();
+            focus_changed(model)
+        }
+        Action::PreviousPanel => {
+            model.focus = model.focus.previous();
+            focus_changed(model)
+        }
+        Action::FocusSessions => {
+            model.focus = Panel::Sessions;
+            focus_changed(model)
+        }
+        Action::FocusRuns => {
+            model.focus = Panel::Runs;
+            focus_changed(model)
+        }
+        Action::FocusAttention => {
+            model.focus = Panel::Attention;
+            focus_changed(model)
+        }
+        Action::FocusDetail => {
+            model.focus = Panel::Detail;
+            focus_changed(model)
+        }
+        Action::Workspace => super::picker::open(model, false),
+        Action::Quit => guarded_quit(model),
+        Action::Logs => super::logs::open(model),
+        Action::Help => {
+            model.overlay = Some(Overlay::Help { scroll: 0 });
+            model.dirty = true;
+            Vec::new()
+        }
+        // Bound to nothing by default in v1 (Task 7 binds ctrl+p).
+        Action::Palette => Vec::new(),
+        // Lists-group actions never reach the Global dispatch.
+        _ => Vec::new(),
+    }
 }
 
 /// Copies `text` to the clipboard via OSC 52 and shows a toast. No-op when
@@ -124,47 +158,78 @@ fn list_key(model: &mut Model, key: KeyEvent) -> Vec<Cmd> {
     if model.focus == Panel::Attention {
         return super::attention::key(model, key);
     }
-    match model.focus {
-        Panel::Sessions => match key.code {
-            KeyCode::Char('j') | KeyCode::Down | KeyCode::PageDown | KeyCode::Char('G') => {
-                model.sessions.select_next()
+    let Some(action) = model.settings.keymap.action(ContextGroup::Lists, &key) else {
+        return Vec::new();
+    };
+    apply_list_action(model, action)
+}
+
+/// Lists-context action handlers, extracted mechanically from the old
+/// per-panel `match key.code { ... }` blocks in `list_key`. `Sessions` and
+/// `Runs` shared most bindings before the extraction (only `NewSession`
+/// was Sessions-only); that panel branch is preserved verbatim per arm.
+pub(super) fn apply_list_action(model: &mut Model, action: Action) -> Vec<Cmd> {
+    match action {
+        Action::MoveDown | Action::PageDown | Action::Bottom => {
+            match model.focus {
+                Panel::Sessions => model.sessions.select_next(),
+                Panel::Runs => model.runs.select_next(),
+                _ => {}
             }
-            KeyCode::Char('k') | KeyCode::Up | KeyCode::PageUp | KeyCode::Char('g') => {
-                model.sessions.select_previous()
+            model.dirty = true;
+            Vec::new()
+        }
+        Action::MoveUp | Action::PageUp | Action::Top => {
+            match model.focus {
+                Panel::Sessions => model.sessions.select_previous(),
+                Panel::Runs => model.runs.select_previous(),
+                _ => {}
             }
-            KeyCode::Char('/') => model.sessions.filter_focused = true,
-            KeyCode::Char('*') => return super::sessions::toggle_agent(model),
-            KeyCode::Char('r') => return super::sessions::refresh(model),
-            KeyCode::Char('n') => return super::sessions::create(model),
-            KeyCode::Enter => return open_session(model),
-            KeyCode::Char('y') => {
-                let copied = model.sessions.selected().map(|row| row.id.clone());
-                return yank(model, copied);
+            model.dirty = true;
+            Vec::new()
+        }
+        Action::Filter => {
+            match model.focus {
+                Panel::Sessions => model.sessions.filter_focused = true,
+                Panel::Runs => model.runs.filter_focused = true,
+                _ => {}
             }
-            _ => return Vec::new(),
+            model.dirty = true;
+            Vec::new()
+        }
+        Action::ToggleScope => match model.focus {
+            Panel::Sessions => super::sessions::toggle_agent(model),
+            Panel::Runs => super::runs::toggle_loop(model),
+            _ => Vec::new(),
         },
-        Panel::Runs => match key.code {
-            KeyCode::Char('j') | KeyCode::Down | KeyCode::PageDown | KeyCode::Char('G') => {
-                model.runs.select_next()
-            }
-            KeyCode::Char('k') | KeyCode::Up | KeyCode::PageUp | KeyCode::Char('g') => {
-                model.runs.select_previous()
-            }
-            KeyCode::Char('/') => model.runs.filter_focused = true,
-            KeyCode::Char('*') => return super::runs::toggle_loop(model),
-            KeyCode::Char('r') => return super::runs::refresh(model),
-            KeyCode::Enter => return open_run(model),
-            KeyCode::Char('y') => {
-                let copied = model.runs.selected().map(|row| row.id.clone());
-                return yank(model, copied);
-            }
-            _ => return Vec::new(),
+        Action::Refresh => match model.focus {
+            Panel::Sessions => super::sessions::refresh(model),
+            Panel::Runs => super::runs::refresh(model),
+            _ => Vec::new(),
         },
-        Panel::Attention => {}
-        Panel::Detail => return Vec::new(),
+        Action::NewSession => {
+            if model.focus == Panel::Sessions {
+                super::sessions::create(model)
+            } else {
+                Vec::new()
+            }
+        }
+        Action::Open => match model.focus {
+            Panel::Sessions => open_session(model),
+            Panel::Runs => open_run(model),
+            _ => Vec::new(),
+        },
+        Action::Yank => {
+            let copied = match model.focus {
+                Panel::Sessions => model.sessions.selected().map(|row| row.id.clone()),
+                Panel::Runs => model.runs.selected().map(|row| row.id.clone()),
+                _ => None,
+            };
+            yank(model, copied)
+        }
+        // Global-only actions never reach the Lists dispatch.
+        _ => Vec::new(),
     }
-    model.dirty = true;
-    Vec::new()
 }
 
 pub(super) fn open_session(model: &mut Model) -> Vec<Cmd> {

@@ -4,6 +4,7 @@ use crate::{
 };
 use batuta_tui::{
     app::{ColorDepthMode, ColorMode, Preset, Settings as TuiSettings, ThemeMode, UiSettings},
+    keymap::{self, Keymap},
     theme::ColorDepth,
 };
 use serde::Deserialize;
@@ -22,6 +23,12 @@ pub struct ConfigFile {
     pub daemon: DaemonFile,
     #[serde(default)]
     pub ui: UiFile,
+    /// `[keys]` remaps Global/Lists actions (v1 scope). Values may be a
+    /// single combo string or an array of combo strings. Kept as a raw
+    /// table (rather than a typed struct) because action names are
+    /// data-driven — see `batuta_tui::keymap::action_by_name`.
+    #[serde(default)]
+    pub keys: toml::Table,
 }
 
 #[derive(Clone, Debug, Default, Deserialize)]
@@ -66,6 +73,7 @@ pub struct Settings {
     pub config_path: PathBuf,
     pub loaded: bool,
     pub warnings: Vec<String>,
+    pub keymap: Keymap,
 }
 
 impl Settings {
@@ -74,6 +82,7 @@ impl Settings {
             preset: self.preset.clone(),
             ui: self.ui.clone(),
             workspace,
+            keymap: self.keymap.clone(),
         }
     }
 
@@ -259,6 +268,7 @@ pub fn resolve(cli: &Cli, env: &Env, file: Option<ConfigFile>) -> Result<Setting
         &mut warnings,
     );
     let notify = file.ui.notify.unwrap_or(true);
+    let keymap = resolve_keymap(file.keys, &mut warnings);
     let (workspace, workspace_source) = match (
         cli.workspace.as_deref().filter(|value| !value.is_empty()),
         env.workspace.as_deref().filter(|value| !value.is_empty()),
@@ -290,7 +300,57 @@ pub fn resolve(cli: &Cli, env: &Env, file: Option<ConfigFile>) -> Result<Setting
         config_path: path(cli),
         loaded: false,
         warnings,
+        keymap,
     })
+}
+
+/// Resolves the `[keys]` table into a `Keymap`, starting from
+/// `Keymap::default()` and applying each entry as a `rebind`. Unknown
+/// action names and unparsable combo specs warn and are skipped rather
+/// than failing config load; a rebind that steals a combo from another
+/// action's only binding also warns (see `Keymap::rebind`).
+fn resolve_keymap(keys: toml::Table, warnings: &mut Vec<String>) -> Keymap {
+    let mut keymap = Keymap::default();
+    for (name, value) in keys {
+        let Some(action) = keymap::action_by_name(&name) else {
+            warnings.push(format!("config: unknown key action `{name}`"));
+            continue;
+        };
+        let specs: Vec<String> = match value {
+            toml::Value::String(spec) => vec![spec],
+            toml::Value::Array(items) => {
+                let mut specs = Vec::new();
+                for item in items {
+                    match item {
+                        toml::Value::String(spec) => specs.push(spec),
+                        other => {
+                            warnings.push(format!(
+                                "config: keys.{name} entry `{other}` must be a string"
+                            ));
+                        }
+                    }
+                }
+                specs
+            }
+            other => {
+                warnings.push(format!(
+                    "config: keys.{name}=`{other}` must be a string or array of strings"
+                ));
+                continue;
+            }
+        };
+        let mut combos = Vec::new();
+        for spec in specs {
+            match keymap::parse_combo(&spec) {
+                Ok(combo) => combos.push(combo),
+                Err(err) => warnings.push(format!("config: keys.{name}: {err}")),
+            }
+        }
+        if !combos.is_empty() {
+            warnings.extend(keymap.rebind(action, combos));
+        }
+    }
+    keymap
 }
 
 fn parse_transport(value: Option<&str>) -> Option<DaemonArg> {
@@ -393,6 +453,12 @@ fn unknown_key_warnings(value: &toml::Value) -> Vec<String> {
         return warnings;
     };
     for (key, value) in table {
+        // `keys` is data-driven (action names, validated separately by
+        // `resolve_keymap` via `keymap::action_by_name`), so its children
+        // are never flagged here as unknown top-level keys.
+        if key == "keys" {
+            continue;
+        }
         let Some((_, keys)) = allowed.iter().find(|(section, _)| section == key) else {
             warnings.push(format!("config: unknown key {key}"));
             continue;
@@ -517,6 +583,56 @@ mod tests {
         assert_eq!(
             theme.style(batuta_tui::theme::SemanticToken::Active).fg,
             None
+        );
+    }
+
+    #[test]
+    fn ut_774_keys_table_resolves_rebinds_and_warns_on_unknown_action_or_bad_combo() {
+        let temp = tempdir().unwrap();
+        let path = temp.path().join("config.toml");
+        fs::write(
+            &path,
+            "[keys]\nquit = 'x'\nfilter = ['ctrl+f']\nbogus_action = 'z'\nrefresh = 'meh'\n",
+        )
+        .unwrap();
+        let mut value = cli();
+        value.config = Some(path);
+        let settings = load_and_resolve(&value, &Env::default()).unwrap();
+
+        // quit was rebound to `x`.
+        let x = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Char('x'),
+            crossterm::event::KeyModifiers::NONE,
+        );
+        assert_eq!(
+            settings
+                .keymap
+                .action(batuta_tui::keymap::ContextGroup::Global, &x),
+            Some(batuta_tui::keymap::Action::Quit)
+        );
+        // filter accepts an array form and was rebound to ctrl+f.
+        let ctrl_f = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Char('f'),
+            crossterm::event::KeyModifiers::CONTROL,
+        );
+        assert_eq!(
+            settings
+                .keymap
+                .action(batuta_tui::keymap::ContextGroup::Lists, &ctrl_f),
+            Some(batuta_tui::keymap::Action::Filter)
+        );
+        // unknown action name and unparsable combo warn rather than error.
+        assert!(
+            settings
+                .warnings
+                .iter()
+                .any(|warning| warning.contains("unknown key action `bogus_action`"))
+        );
+        assert!(
+            settings
+                .warnings
+                .iter()
+                .any(|warning| warning.contains("keys.refresh"))
         );
     }
 
