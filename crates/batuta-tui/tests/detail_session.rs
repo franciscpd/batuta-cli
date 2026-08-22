@@ -504,3 +504,36 @@ fn ut_651_runtime_conflict_path_is_not_applicable_without_runtime_set() {
             .any(|pending| format!("{pending:?}").contains("RuntimeSet"))
     );
 }
+
+#[test]
+fn ut_764_yank_key_copies_selected_transcript_entry() {
+    let mut model = detail_model("active", false);
+    let snapshot: TranscriptSnapshot = serde_json::from_value(serde_json::json!({
+        "epoch": 1,
+        "generation": 1,
+        "max_sequence": 1,
+        "entries": [
+            {"start_sequence": 1, "sequence": 1, "message": {"id": "one", "role": "assistant", "parts": [{"type": "text", "text": "hello entry"}]}}
+        ]
+    }))
+    .unwrap();
+    update(
+        &mut model,
+        Msg::Stream {
+            id: StreamId::Transcript("sess-a".into()),
+            event: AnyStreamEvent::Transcript(TranscriptEvent::Snapshot(snapshot)),
+        },
+    );
+    let detail = model.session_detail_mut().unwrap();
+    detail.view.follow = false;
+    detail.view.selection = 0;
+
+    let commands = update(&mut model, key(KeyCode::Char('y')));
+
+    let copied = commands.iter().find_map(|cmd| match cmd {
+        Cmd::CopyToClipboard(text) => Some(text.clone()),
+        _ => None,
+    });
+    assert_eq!(copied.as_deref(), Some("hello entry"));
+    assert!(model.toast.is_some());
+}

@@ -8,6 +8,7 @@ publish = false
 
 [dependencies]
 async-stream = "0.3"
+base64.workspace = true
 compozy-client = { path = "../compozy-client" }
 crossterm.workspace = true
 futures-util.workspace = true

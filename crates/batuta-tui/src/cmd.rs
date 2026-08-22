@@ -210,4 +210,5 @@ pub enum Cmd {
     Render,
     Quit,
     Notify { body: String },
+    CopyToClipboard(String),
 }

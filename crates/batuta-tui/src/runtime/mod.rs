@@ -662,6 +662,14 @@ where
                 let _ = stdout.write_all(&notify_bytes(&body));
                 let _ = stdout.flush();
             }
+            Cmd::CopyToClipboard(payload) => {
+                use std::io::Write;
+                // OSC 52 receivers commonly truncate near 100 KB; stay well under.
+                let capped: String = payload.chars().take(64 * 1024).collect();
+                let mut stdout = std::io::stdout().lock();
+                let _ = stdout.write_all(&osc52_bytes(&capped));
+                let _ = stdout.flush();
+            }
         }
     }
     Ok(false)
@@ -683,6 +691,14 @@ pub fn notify_bytes(body: &str) -> Vec<u8> {
     bytes
 }
 
+/// OSC 52 clipboard write (`ESC ] 52 ; c ; <base64> ESC \`). `c` targets the
+/// system clipboard; base64 payload per the xterm spec. ST terminator.
+pub fn osc52_bytes(payload: &str) -> Vec<u8> {
+    use base64::Engine as _;
+    let encoded = base64::engine::general_purpose::STANDARD.encode(payload.as_bytes());
+    format!("\x1b]52;c;{encoded}\x1b\\").into_bytes()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -700,6 +716,13 @@ mod tests {
         assert!(bytes.starts_with(b"\x07"));
         let text = String::from_utf8(bytes).unwrap();
         assert!(text.contains("\x1b]9;2 attention items\x1b\\"));
+    }
+
+    #[test]
+    fn ut_762_osc52_bytes_wrap_base64_payload() {
+        let bytes = super::osc52_bytes("hello");
+        let text = String::from_utf8(bytes).unwrap();
+        assert_eq!(text, "\x1b]52;c;aGVsbG8=\x1b\\");
     }
 
     #[derive(Clone, Default)]

@@ -208,6 +208,7 @@ name = "batuta-tui"
 version = "0.1.0-beta.5"
 dependencies = [
  "async-stream",
+ "base64",
  "compozy-client",
  "compozy-testkit",
  "crossterm",

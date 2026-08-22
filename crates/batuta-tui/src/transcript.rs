@@ -4,6 +4,44 @@ use compozy_client::{
 };
 use std::collections::BTreeMap;
 
+/// Lossless-enough plain text for clipboard: text parts verbatim; tool parts
+/// as "name\ninput\noutput\nerror"; everything else via its JSON value.
+pub fn entry_plain_text(entry: &Entry) -> String {
+    entry
+        .message
+        .parts
+        .iter()
+        .map(|part| match part {
+            Part::Text { text, .. } => text.clone(),
+            Part::Tool {
+                name,
+                input,
+                output,
+                error_text,
+                ..
+            } => {
+                let mut text = name.clone();
+                for value in [input, output].into_iter().flatten() {
+                    text.push('\n');
+                    text.push_str(
+                        &value
+                            .as_str()
+                            .map(str::to_owned)
+                            .unwrap_or_else(|| value.to_string()),
+                    );
+                }
+                if let Some(error) = error_text {
+                    text.push('\n');
+                    text.push_str(error);
+                }
+                text
+            }
+            other => serde_json::to_string(other).unwrap_or_default(),
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Applied {
     Ok,
@@ -214,6 +252,33 @@ mod tests {
                 .collect(),
             ..TranscriptState::default()
         }
+    }
+
+    #[test]
+    fn ut_763_entry_plain_text_extracts_text_and_tool_parts() {
+        let text_entry = entry(
+            1,
+            Part::Text {
+                text: "hello *world*".into(),
+                state: None,
+            },
+        );
+        assert_eq!(entry_plain_text(&text_entry), "hello *world*");
+        let tool = entry(
+            2,
+            Part::Tool {
+                name: "bash".into(),
+                tool_call_id: None,
+                state: Some("completed".into()),
+                input: None,
+                output: Some(serde_json::json!("ls -la")),
+                error_text: None,
+                title: None,
+            },
+        );
+        let text = entry_plain_text(&tool);
+        assert!(text.contains("bash"));
+        assert!(text.contains("ls -la"));
     }
 
     #[test]

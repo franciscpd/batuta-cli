@@ -1,6 +1,7 @@
 use crate::{
     app::model::{
-        Detail, FooterState, Model, Overlay, Panel, StreamStatus, entry_has_expandable_part,
+        Detail, FooterState, Model, Overlay, Panel, StreamStatus, Toast, ToastKind,
+        entry_has_expandable_part,
     },
     cmd::{Cmd, Request, StreamId, TimerId},
 };
@@ -101,6 +102,24 @@ fn focus_changed(model: &mut Model) -> Vec<Cmd> {
     Vec::new()
 }
 
+/// Copies `text` to the clipboard via OSC 52 and shows a toast. No-op when
+/// nothing is selected.
+fn yank(model: &mut Model, text: Option<String>) -> Vec<Cmd> {
+    let Some(text) = text else {
+        return Vec::new();
+    };
+    model.toast = Some(Toast {
+        kind: ToastKind::Info,
+        text: format!("copied {text}"),
+        sticky: false,
+    });
+    model.dirty = true;
+    vec![
+        Cmd::CopyToClipboard(text),
+        Cmd::After(Duration::from_secs(3), TimerId::ToastExpiry),
+    ]
+}
+
 fn list_key(model: &mut Model, key: KeyEvent) -> Vec<Cmd> {
     if model.focus == Panel::Attention {
         return super::attention::key(model, key);
@@ -118,6 +137,10 @@ fn list_key(model: &mut Model, key: KeyEvent) -> Vec<Cmd> {
             KeyCode::Char('r') => return super::sessions::refresh(model),
             KeyCode::Char('n') => return super::sessions::create(model),
             KeyCode::Enter => return open_session(model),
+            KeyCode::Char('y') => {
+                let copied = model.sessions.selected().map(|row| row.id.clone());
+                return yank(model, copied);
+            }
             _ => return Vec::new(),
         },
         Panel::Runs => match key.code {
@@ -131,6 +154,10 @@ fn list_key(model: &mut Model, key: KeyEvent) -> Vec<Cmd> {
             KeyCode::Char('*') => return super::runs::toggle_loop(model),
             KeyCode::Char('r') => return super::runs::refresh(model),
             KeyCode::Enter => return open_run(model),
+            KeyCode::Char('y') => {
+                let copied = model.runs.selected().map(|row| row.id.clone());
+                return yank(model, copied);
+            }
             _ => return Vec::new(),
         },
         Panel::Attention => {}
@@ -355,6 +382,36 @@ fn detail_key(model: &mut Model, key: KeyEvent) -> Vec<Cmd> {
             detail.view.cache_dirty = true;
         }
         KeyCode::Char('i') => detail.composer.focused = true,
+        KeyCode::Char('y') => {
+            let entries = detail.transcript.entries();
+            let indexes: Vec<usize> = match rows.get(detail.view.selection) {
+                Some(crate::transcript::PresentationRow::Entry { entry_index }) => {
+                    vec![*entry_index]
+                }
+                Some(crate::transcript::PresentationRow::Group { entry_indexes, .. }) => {
+                    entry_indexes.clone()
+                }
+                None => Vec::new(),
+            };
+            let text = indexes
+                .iter()
+                .filter_map(|index| entries.get(*index))
+                .map(|entry| crate::transcript::entry_plain_text(entry))
+                .collect::<Vec<_>>()
+                .join("\n\n");
+            if !text.is_empty() {
+                model.toast = Some(Toast {
+                    kind: ToastKind::Info,
+                    text: "copied entry".into(),
+                    sticky: false,
+                });
+                model.dirty = true;
+                return vec![
+                    Cmd::CopyToClipboard(text),
+                    Cmd::After(Duration::from_secs(3), TimerId::ToastExpiry),
+                ];
+            }
+        }
         KeyCode::Enter => {
             let selected_start = rows.get(detail.view.selection).and_then(|row| {
                 detail

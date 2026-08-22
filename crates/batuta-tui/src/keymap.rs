@@ -71,6 +71,11 @@ pub const BINDINGS: &[Binding] = &[
         action: "all/refresh",
     },
     Binding {
+        context: Context::Lists,
+        keys: "y",
+        action: "yank id",
+    },
+    Binding {
         context: Context::Sessions,
         keys: "n",
         action: "new session",
@@ -82,7 +87,7 @@ pub const BINDINGS: &[Binding] = &[
     },
     Binding {
         context: Context::SessionDetail,
-        keys: "j/k/PgUp/PgDn/g/G/Enter/t",
+        keys: "j/k/PgUp/PgDn/g/G/Enter/t/y",
         action: "navigate",
     },
     Binding {
