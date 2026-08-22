@@ -11,11 +11,12 @@ Status: beta.
 
 Prebuilt binaries (Linux x86_64, macOS x86_64/arm64) are attached to each
 [GitHub Release](https://github.com/franciscpd/batuta-cli/releases), with
-SHA-256 checksum sidecars:
+SHA-256 checksum sidecars. While releases are betas, pick the newest tag from
+the releases page:
 
 ```console
-curl -LO https://github.com/franciscpd/batuta-cli/releases/latest/download/batuta-x86_64-unknown-linux-gnu.tar.xz
-curl -LO https://github.com/franciscpd/batuta-cli/releases/latest/download/batuta-x86_64-unknown-linux-gnu.tar.xz.sha256
+curl -LO https://github.com/franciscpd/batuta-cli/releases/download/v0.1.0-beta.5/batuta-x86_64-unknown-linux-gnu.tar.xz
+curl -LO https://github.com/franciscpd/batuta-cli/releases/download/v0.1.0-beta.5/batuta-x86_64-unknown-linux-gnu.tar.xz.sha256
 sha256sum -c batuta-x86_64-unknown-linux-gnu.tar.xz.sha256
 tar -xf batuta-x86_64-unknown-linux-gnu.tar.xz
 ```
