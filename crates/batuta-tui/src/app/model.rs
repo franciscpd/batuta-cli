@@ -603,6 +603,9 @@ impl Model {
             active_streams: HashSet::new(),
             stream_status: HashMap::new(),
             stream_cursors: HashMap::new(),
+            // Always Ansi16 here: this crate never reads COLORTERM. Callers
+            // that support truecolor (crates/batuta) resolve ColorDepth and
+            // reassign `model.theme` via `Theme::with_options` afterward.
             theme: Theme::with_variant(
                 color,
                 theme_mode.into(),

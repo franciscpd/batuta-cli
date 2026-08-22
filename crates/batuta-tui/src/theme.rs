@@ -162,10 +162,15 @@ impl Theme {
                 Color::Rgb(0x7b, 0x3f, 0xa0),
             ),
         };
+        let default = if color && depth == ColorDepth::TrueColor && variant != ThemeVariant::Light {
+            Style::default().fg(Color::Rgb(0xd8, 0xde, 0xe9))
+        } else {
+            Style::default()
+        };
         Self {
             color,
             variant,
-            default: Style::default(),
+            default,
             muted: colored(muted).add_modifier(Modifier::DIM),
             emphasis: colored(active).add_modifier(Modifier::BOLD),
             success: colored(success).add_modifier(Modifier::BOLD),
@@ -326,5 +331,18 @@ mod tests {
         ));
         let plain = Theme::with_options(false, ThemeVariant::Dark, None, ColorDepth::TrueColor);
         assert_eq!(plain.style(SemanticToken::Active).fg, None);
+    }
+
+    #[test]
+    fn ut_771_truecolor_dark_prose_uses_documented_fg_light_stays_terminal_default() {
+        let dark = Theme::with_options(true, ThemeVariant::Dark, None, ColorDepth::TrueColor);
+        assert_eq!(
+            dark.style(SemanticToken::Text).fg,
+            Some(Color::Rgb(0xd8, 0xde, 0xe9))
+        );
+        let light = Theme::with_options(true, ThemeVariant::Light, None, ColorDepth::TrueColor);
+        assert_eq!(light.style(SemanticToken::Text).fg, None);
+        let no_color = Theme::with_options(false, ThemeVariant::Dark, None, ColorDepth::TrueColor);
+        assert_eq!(no_color.style(SemanticToken::Text).fg, None);
     }
 }
