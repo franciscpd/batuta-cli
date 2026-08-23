@@ -6,12 +6,12 @@ batuta · batuta-cli · sess-807cee9774b33f68 · batuta · "Analisar e implement
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 beginning of transcript
 ▸ user
-  Unicode: café 東 京  indented continuation long-token-0123456789abcdef0123456789abcdef0123456789abcdef
+  Unicode: café 東 京
+  indented continuation
+  long-token-0123456789abcdef0123456789abcdef0123456789abcdef
 
 ▸ batuta
   Markdown preserves whitespace and wraps this deliberately extended conversation without dropping content.▍
-
-
 
 
 
