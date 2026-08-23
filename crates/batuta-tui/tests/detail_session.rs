@@ -504,3 +504,180 @@ fn ut_651_runtime_conflict_path_is_not_applicable_without_runtime_set() {
             .any(|pending| format!("{pending:?}").contains("RuntimeSet"))
     );
 }
+
+#[test]
+fn ut_764_yank_key_copies_selected_transcript_entry() {
+    let mut model = detail_model("active", false);
+    let snapshot: TranscriptSnapshot = serde_json::from_value(serde_json::json!({
+        "epoch": 1,
+        "generation": 1,
+        "max_sequence": 1,
+        "entries": [
+            {"start_sequence": 1, "sequence": 1, "message": {"id": "one", "role": "assistant", "parts": [{"type": "text", "text": "hello entry"}]}}
+        ]
+    }))
+    .unwrap();
+    update(
+        &mut model,
+        Msg::Stream {
+            id: StreamId::Transcript("sess-a".into()),
+            event: AnyStreamEvent::Transcript(TranscriptEvent::Snapshot(snapshot)),
+        },
+    );
+    let detail = model.session_detail_mut().unwrap();
+    detail.view.follow = false;
+    detail.view.selection = 0;
+
+    let commands = update(&mut model, key(KeyCode::Char('y')));
+
+    let copied = commands.iter().find_map(|cmd| match cmd {
+        Cmd::CopyToClipboard(text) => Some(text.clone()),
+        _ => None,
+    });
+    assert_eq!(copied.as_deref(), Some("hello entry"));
+    assert!(model.toast.is_some());
+}
+
+fn session_with_entries(texts: &[&str]) -> batuta_tui::Model {
+    let mut model = detail_model("active", false);
+    let entries: Vec<_> = texts
+        .iter()
+        .enumerate()
+        .map(|(index, text)| {
+            serde_json::json!({
+                "start_sequence": index as i64 + 1,
+                "sequence": index as i64 + 1,
+                "message": {
+                    "id": format!("m{index}"),
+                    "role": "assistant",
+                    "parts": [{"type": "text", "text": text}],
+                },
+            })
+        })
+        .collect();
+    let snapshot: TranscriptSnapshot = serde_json::from_value(serde_json::json!({
+        "epoch": 1,
+        "generation": 1,
+        "max_sequence": texts.len() as i64,
+        "entries": entries,
+    }))
+    .unwrap();
+    update(
+        &mut model,
+        Msg::Stream {
+            id: StreamId::Transcript("sess-a".into()),
+            event: AnyStreamEvent::Transcript(TranscriptEvent::Snapshot(snapshot)),
+        },
+    );
+    let detail = model.session_detail_mut().unwrap();
+    detail.view.follow = false;
+    detail.view.selection = 0;
+    model
+}
+
+fn press(model: &mut batuta_tui::Model, c: char) {
+    update(model, key(KeyCode::Char(c)));
+}
+
+fn press_key(model: &mut batuta_tui::Model, code: KeyCode) {
+    update(model, key(code));
+}
+
+fn type_str(model: &mut batuta_tui::Model, s: &str) {
+    for c in s.chars() {
+        press(model, c);
+    }
+}
+
+#[test]
+fn ut_765_search_jumps_and_cycles_matches() {
+    let mut model = session_with_entries(&["alpha", "beta", "alpha two"]);
+    press(&mut model, '/');
+    type_str(&mut model, "alpha");
+    press_key(&mut model, KeyCode::Enter);
+    let view = &model.session_detail().unwrap().view;
+    assert_eq!(view.selection, 0);
+    assert!(!view.follow);
+    press(&mut model, 'n');
+    assert_eq!(model.session_detail().unwrap().view.selection, 2);
+    press(&mut model, 'n'); // wraps
+    assert_eq!(model.session_detail().unwrap().view.selection, 0);
+    press_key(&mut model, KeyCode::Esc);
+    assert!(model.session_detail().unwrap().view.search.is_none());
+}
+
+#[test]
+fn ut_766_search_footer_shows_prompt_then_status() {
+    let mut model = session_with_entries(&["alpha", "beta", "alpha two"]);
+    press(&mut model, '/');
+    type_str(&mut model, "alpha");
+    assert!(render(&model, 100, 30).contains("search: alpha"));
+    press_key(&mut model, KeyCode::Enter);
+    let status_footer = render(&model, 100, 30);
+    assert!(status_footer.contains("search \"alpha\""));
+    assert!(status_footer.contains("1/2"));
+}
+
+#[test]
+fn ut_767_raw_debug_toggle_recomputes_search_matches() {
+    let mut model = detail_model("active", false);
+    let snapshot: TranscriptSnapshot = serde_json::from_value(serde_json::json!({
+        "epoch": 1,
+        "generation": 1,
+        "max_sequence": 4,
+        "entries": [
+            {"start_sequence": 1, "sequence": 1, "message": {"id": "m1", "role": "assistant", "parts": [{"type": "text", "text": "target"}]}},
+            {"start_sequence": 2, "sequence": 2, "message": {"id": "m2", "role": "assistant", "parts": [{"type": "tool-read", "state": "completed"}]}},
+            {"start_sequence": 3, "sequence": 3, "message": {"id": "m3", "role": "assistant", "parts": [{"type": "tool-read", "state": "completed"}]}},
+            {"start_sequence": 4, "sequence": 4, "message": {"id": "m4", "role": "assistant", "parts": [{"type": "text", "text": "other search hit"}]}}
+        ]
+    }))
+    .unwrap();
+    update(
+        &mut model,
+        Msg::Stream {
+            id: StreamId::Transcript("sess-a".into()),
+            event: AnyStreamEvent::Transcript(TranscriptEvent::Snapshot(snapshot)),
+        },
+    );
+    let detail = model.session_detail_mut().unwrap();
+    detail.view.follow = false;
+    detail.view.selection = 0;
+    assert!(!detail.view.raw_debug);
+    // Grouped presentation (raw_debug = false) has 3 rows: the text entry,
+    // the grouped pair of "read" tool entries, and the trailing text entry.
+    assert_eq!(detail.transcript.presentation_rows(false).len(), 3);
+    assert_eq!(detail.transcript.presentation_rows(true).len(), 4);
+
+    press(&mut model, '/');
+    type_str(&mut model, "other");
+    press_key(&mut model, KeyCode::Enter);
+    {
+        let search = model
+            .session_detail()
+            .unwrap()
+            .view
+            .search
+            .as_ref()
+            .unwrap();
+        // Grouped layout: row 2 is the trailing "other search hit" entry.
+        assert_eq!(search.matches, vec![2]);
+    }
+    assert_eq!(model.session_detail().unwrap().view.selection, 2);
+
+    press(&mut model, 'D');
+
+    assert!(model.session_detail().unwrap().view.raw_debug);
+    let search = model
+        .session_detail()
+        .unwrap()
+        .view
+        .search
+        .as_ref()
+        .unwrap();
+    // Raw layout has one row per entry, so the match must be recomputed to
+    // row 3 (the fourth entry) rather than left stale at row 2 (which is
+    // now the second grouped "read" tool entry and does not match "other").
+    assert_eq!(search.matches, vec![3]);
+    assert_eq!(search.current, 0);
+}

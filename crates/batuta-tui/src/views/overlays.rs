@@ -5,6 +5,7 @@ use crate::{
 use ratatui::{
     Frame,
     layout::Rect,
+    text::{Line, Text},
     widgets::{Block, Borders, Clear, Paragraph, Wrap},
 };
 fn centered(area: Rect, width: u16, height: u16) -> Rect {
@@ -50,8 +51,33 @@ pub fn render(model: &Model, frame: &mut Frame<'_>) {
         );
         return;
     }
+    if let Some(Overlay::Palette { query, selected }) = &model.overlay {
+        let area = centered(frame.area(), 60, 16);
+        let entries = crate::app::update::palette::entries(model, query);
+        let mut lines = vec![Line::from(format!("> {query}▏"))];
+        for (index, entry) in entries.iter().enumerate() {
+            let line = Line::from(format!("  {}", entry.label));
+            lines.push(if index == *selected {
+                line.style(model.theme.selection)
+            } else {
+                line
+            });
+        }
+        frame.render_widget(Clear, area);
+        frame.render_widget(
+            Paragraph::new(Text::from(lines))
+                .block(Block::default().title("palette").borders(Borders::ALL))
+                .style(model.theme.default),
+            area,
+        );
+        return;
+    }
     let (title, text, scroll) = match overlay {
-        Overlay::Help { scroll } => ("help".to_owned(), keymap::help_lines().join("\n"), *scroll),
+        Overlay::Help { scroll } => (
+            "help".to_owned(),
+            keymap::help_lines(&model.settings.keymap).join("\n"),
+            *scroll,
+        ),
         Overlay::WorkspaceOnboarding {
             candidate,
             confirming,
@@ -101,7 +127,9 @@ pub fn render(model: &Model, frame: &mut Frame<'_>) {
                 0,
             )
         }
-        Overlay::Logs { .. } | Overlay::WorkspacePicker { .. } => unreachable!(),
+        Overlay::Logs { .. } | Overlay::WorkspacePicker { .. } | Overlay::Palette { .. } => {
+            unreachable!()
+        }
         Overlay::Clarify { .. } => {
             let (title, text) = super::clarify::content(overlay).expect("clarification overlay");
             (title, text, 0)

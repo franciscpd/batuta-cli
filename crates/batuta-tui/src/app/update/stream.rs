@@ -39,8 +39,8 @@ pub(super) fn stream(model: &mut Model, id: StreamId, event: AnyStreamEvent) -> 
             }
             if permission_delta {
                 crate::app::panels::attention::sync_open_detail(model);
-                crate::app::panels::attention::rebuild(model);
                 let mut all = commands;
+                all.extend(crate::app::panels::attention::rebuild(model));
                 all.extend(super::attention::refresh(model));
                 all
             } else {
@@ -131,6 +131,7 @@ fn transcript(model: &mut Model, session: &str, event: TranscriptEvent) -> Vec<C
             match detail.transcript.apply_delta(delta.clone()) {
                 Applied::Ok => {
                     detail.view.cache_dirty = true;
+                    super::search::recompute_search(detail);
                     if detail.view.follow {
                         detail.view.selection = detail
                             .transcript
@@ -231,6 +232,7 @@ fn apply_snapshot(
         .flatten();
     detail.transcript.apply_snapshot(snapshot);
     detail.view.cache_dirty = true;
+    super::search::recompute_search(detail);
     if detail.view.follow {
         detail.view.selection = detail
             .transcript

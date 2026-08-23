@@ -11,9 +11,11 @@ pub struct RatatuiOps;
 
 impl TerminalOps for RatatuiOps {
     fn enter(&self) -> std::io::Result<()> {
+        let _ = crossterm::execute!(std::io::stdout(), crossterm::event::EnableFocusChange);
         Ok(())
     }
     fn restore(&self) {
+        let _ = crossterm::execute!(std::io::stdout(), crossterm::event::DisableFocusChange);
         ratatui::restore();
     }
 }

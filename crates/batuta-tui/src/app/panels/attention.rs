@@ -13,11 +13,11 @@ fn permissions(entries: &[Entry]) -> Vec<PermissionData> {
         .collect()
 }
 
-pub fn apply_transcript(model: &mut Model, session: &str, page: &TranscriptPage) {
+pub fn apply_transcript(model: &mut Model, session: &str, page: &TranscriptPage) -> Vec<Cmd> {
     model
         .attention_permissions
         .insert(session.to_owned(), permissions(&page.entries));
-    rebuild(model);
+    rebuild(model)
 }
 
 pub fn sync_open_detail(model: &mut Model) {
@@ -77,7 +77,22 @@ pub fn refresh(model: &mut Model) -> Vec<Cmd> {
     commands
 }
 
-pub fn rebuild(model: &mut Model) {
+/// Pushes `Cmd::Notify` when the attention list grew, the terminal is
+/// unfocused, and notifications are enabled; otherwise a no-op.
+fn notify_on_growth(model: &Model, before: usize, commands: &mut Vec<Cmd>) {
+    let after = model.attention.len();
+    if after > before && !model.terminal_focused && model.settings.ui.notify {
+        commands.push(Cmd::Notify {
+            body: format!(
+                "batuta: {after} attention item{}",
+                if after == 1 { "" } else { "s" }
+            ),
+        });
+    }
+}
+
+pub fn rebuild(model: &mut Model) -> Vec<Cmd> {
+    let before = model.attention.len();
     let visible = model
         .sessions_unfiltered
         .iter()
@@ -166,6 +181,9 @@ pub fn rebuild(model: &mut Model) {
                 .min(model.attention.len() - 1),
         )
     };
+    let mut commands = Vec::new();
+    notify_on_growth(model, before, &mut commands);
+    commands
 }
 
 pub fn permission_from_delta(parts: &[Part]) -> bool {

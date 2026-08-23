@@ -40,6 +40,21 @@ fn footer(model: &Model) -> String {
     let Some(detail) = model.session_detail() else {
         return String::new();
     };
+    if let Some(search) = &detail.view.search {
+        let position = if search.matches.is_empty() {
+            "0/0".to_string()
+        } else {
+            format!("{}/{}", search.current + 1, search.matches.len())
+        };
+        return if search.focused {
+            format!("search: {}▏  Enter confirm  Esc cancel", search.query)
+        } else {
+            format!(
+                "search \"{}\" · {position} · n/N next/prev · Esc clear",
+                search.query
+            )
+        };
+    }
     match &detail.view.footer {
         FooterState::Live => "live".into(),
         FooterState::Stopped { .. } => "stopped — sending a prompt restarts it".into(),

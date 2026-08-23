@@ -61,4 +61,4 @@ warning: daemon version dev — compatibility unverified (floor v0.3.0-beta.16)
 ┌[3] Attention (0)─────────────────────────────────────────────────────────────┐│                                                                                                                      │
 │nothing needs attention                                                       ││                                                                                                                      │
 └──────────────────────────────────────────────────────────────────────────────┘└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
-1-4 focus  Tab/Shift+Tab next/previous  w workspace  L logs  ?/F1 help  q/Ctrl+C quit  j/k/↑/↓/PgUp/PgDn/g/G move  Enter open  / filter  */r all/refresh  n new session
+1-4 focus  Tab/Shift+Tab next/previous  w workspace  L logs  ?/F1 help  q/Ctrl+C quit  j/k/↑/↓/PgUp/PgDn/g/G move  Enter open  / filter  */r all/refresh  y yank id  n new session

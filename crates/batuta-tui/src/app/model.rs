@@ -1,6 +1,7 @@
 use crate::{
     app::composer::ComposerState,
     cmd::{Cmd, LogScope, Request, RequestId, StreamId, TimerId},
+    keymap::Keymap,
     theme::{Theme, ThemeVariant},
     transcript::TranscriptState,
 };
@@ -55,6 +56,16 @@ pub enum ThemeMode {
     Light,
 }
 
+/// Config-facing color depth selector. `Auto` is resolved to a concrete
+/// `theme::ColorDepth` outside the TUI crate (in `crates/batuta`), which is
+/// the only place allowed to inspect `COLORTERM`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ColorDepthMode {
+    #[default]
+    Auto,
+    Ansi16,
+}
+
 impl From<ThemeMode> for ThemeVariant {
     fn from(value: ThemeMode) -> Self {
         match value {
@@ -87,18 +98,22 @@ impl Default for Preset {
 pub struct UiSettings {
     pub color: ColorMode,
     pub theme: ThemeMode,
+    pub color_depth: ColorDepthMode,
     pub fps: u16,
     pub sessions_limit: u64,
     pub runs_limit: u64,
+    pub notify: bool,
 }
 impl Default for UiSettings {
     fn default() -> Self {
         Self {
             color: ColorMode::Auto,
             theme: ThemeMode::Auto,
+            color_depth: ColorDepthMode::Auto,
             fps: 30,
             sessions_limit: 50,
             runs_limit: 50,
+            notify: true,
         }
     }
 }
@@ -121,6 +136,7 @@ pub struct Settings {
     pub preset: Preset,
     pub ui: UiSettings,
     pub workspace: Option<WorkspaceRef>,
+    pub keymap: Keymap,
 }
 impl Default for Settings {
     fn default() -> Self {
@@ -132,6 +148,7 @@ impl Default for Settings {
                 name: "workspace".into(),
                 root_dir: String::new(),
             }),
+            keymap: Keymap::default(),
         }
     }
 }
@@ -275,6 +292,17 @@ pub struct TranscriptView {
     pub beginning: bool,
     pub render_cache: HashMap<RenderCacheKey, Text<'static>>,
     pub cache_dirty: bool,
+    pub search: Option<SearchState>,
+}
+
+/// Transcript search: `/` opens the prompt, `Enter` confirms and jumps,
+/// `n`/`N` cycle matches. `matches` holds presentation-row indexes.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct SearchState {
+    pub query: String,
+    pub focused: bool,
+    pub matches: Vec<usize>,
+    pub current: usize,
 }
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq)]
@@ -422,6 +450,10 @@ pub enum Overlay {
         text_focused: bool,
         hint: Option<String>,
     },
+    Palette {
+        query: String,
+        selected: usize,
+    },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -516,6 +548,7 @@ pub struct Model {
     pub stream_cursors: HashMap<StreamId, String>,
     pub theme: Theme,
     pub quit_guard: bool,
+    pub terminal_focused: bool,
     next_request: u64,
     next_message: u64,
 }
@@ -577,12 +610,16 @@ impl Model {
             active_streams: HashSet::new(),
             stream_status: HashMap::new(),
             stream_cursors: HashMap::new(),
+            // Always Ansi16 here: this crate never reads COLORTERM. Callers
+            // that support truecolor (crates/batuta) resolve ColorDepth and
+            // reassign `model.theme` via `Theme::with_options` afterward.
             theme: Theme::with_variant(
                 color,
                 theme_mode.into(),
                 std::env::var("COLORFGBG").ok().as_deref(),
             ),
             quit_guard: false,
+            terminal_focused: true,
             next_request: 1,
             next_message: 1,
         }
@@ -751,6 +788,9 @@ impl Model {
         self.composer_focused()
             || self.sessions.filter_focused
             || self.runs.filter_focused
+            || self
+                .session_detail()
+                .is_some_and(|detail| detail.view.search.as_ref().is_some_and(|s| s.focused))
             || matches!(
                 &self.overlay,
                 Some(Overlay::Clarify {
@@ -850,6 +890,7 @@ pub fn page_into_detail(detail: &mut SessionDetail, page: TranscriptPage) {
     detail.view.fetching = false;
     detail.view.beginning = !has_older;
     detail.view.cache_dirty = true;
+    crate::app::update::search::recompute_search(detail);
 }
 
 #[cfg(test)]

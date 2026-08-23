@@ -2,7 +2,11 @@ use crate::{
     cli::{Cli, DaemonArg},
     workspace::WorkspaceSelectorSource,
 };
-use batuta_tui::app::{ColorMode, Preset, Settings as TuiSettings, ThemeMode, UiSettings};
+use batuta_tui::{
+    app::{ColorDepthMode, ColorMode, Preset, Settings as TuiSettings, ThemeMode, UiSettings},
+    keymap::{self, ContextGroup, Keymap},
+    theme::ColorDepth,
+};
 use serde::Deserialize;
 use std::{
     env,
@@ -19,6 +23,12 @@ pub struct ConfigFile {
     pub daemon: DaemonFile,
     #[serde(default)]
     pub ui: UiFile,
+    /// `[keys]` remaps Global/Lists actions (v1 scope). Values may be a
+    /// single combo string or an array of combo strings. Kept as a raw
+    /// table (rather than a typed struct) because action names are
+    /// data-driven — see `batuta_tui::keymap::action_by_name`.
+    #[serde(default)]
+    pub keys: toml::Table,
 }
 
 #[derive(Clone, Debug, Default, Deserialize)]
@@ -40,9 +50,11 @@ pub struct DaemonFile {
 pub struct UiFile {
     pub color: Option<String>,
     pub theme: Option<String>,
+    pub color_depth: Option<String>,
     pub fps: Option<u16>,
     pub sessions_limit: Option<u64>,
     pub runs_limit: Option<u64>,
+    pub notify: Option<bool>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -61,6 +73,7 @@ pub struct Settings {
     pub config_path: PathBuf,
     pub loaded: bool,
     pub warnings: Vec<String>,
+    pub keymap: Keymap,
 }
 
 impl Settings {
@@ -69,6 +82,7 @@ impl Settings {
             preset: self.preset.clone(),
             ui: self.ui.clone(),
             workspace,
+            keymap: self.keymap.clone(),
         }
     }
 
@@ -229,6 +243,15 @@ pub fn resolve(cli: &Cli, env: &Env, file: Option<ConfigFile>) -> Result<Setting
         parse_color(file.ui.color.as_deref()).unwrap_or(ColorMode::Auto)
     };
     let theme = parse_theme(file.ui.theme.as_deref()).unwrap_or(ThemeMode::Auto);
+    let color_depth = match file.ui.color_depth.as_deref() {
+        None => ColorDepthMode::Auto,
+        Some(value) => parse_color_depth(Some(value)).unwrap_or_else(|| {
+            warnings.push(format!(
+                "config: ui.color_depth={value} invalid, using auto"
+            ));
+            ColorDepthMode::Auto
+        }),
+    };
     let fps = clamp(file.ui.fps.unwrap_or(30), 5, 60, "fps", &mut warnings);
     let sessions_limit = clamp(
         file.ui.sessions_limit.unwrap_or(50),
@@ -244,6 +267,8 @@ pub fn resolve(cli: &Cli, env: &Env, file: Option<ConfigFile>) -> Result<Setting
         "runs_limit",
         &mut warnings,
     );
+    let notify = file.ui.notify.unwrap_or(true);
+    let keymap = resolve_keymap(file.keys, &mut warnings);
     let (workspace, workspace_source) = match (
         cli.workspace.as_deref().filter(|value| !value.is_empty()),
         env.workspace.as_deref().filter(|value| !value.is_empty()),
@@ -264,16 +289,121 @@ pub fn resolve(cli: &Cli, env: &Env, file: Option<ConfigFile>) -> Result<Setting
         ui: UiSettings {
             color,
             theme,
+            color_depth,
             fps,
             sessions_limit,
             runs_limit,
+            notify,
         },
         workspace,
         workspace_source,
         config_path: path(cli),
         loaded: false,
         warnings,
+        keymap,
     })
+}
+
+/// Resolves the `[keys]` table into a `Keymap`, starting from
+/// `Keymap::default()` and applying each entry as a `rebind`. Unknown
+/// action names and unparsable combo specs warn and are skipped rather
+/// than failing config load; a rebind that steals a combo from another
+/// action's only binding also warns (see `Keymap::rebind`). After every
+/// entry is applied, `warn_new_collisions` checks the result for combos
+/// that now do something ambiguous the shipped defaults never did.
+fn resolve_keymap(keys: toml::Table, warnings: &mut Vec<String>) -> Keymap {
+    let default_global = Keymap::default().bound_combos(ContextGroup::Global);
+    let mut keymap = Keymap::default();
+    for (name, value) in keys {
+        let Some(action) = keymap::action_by_name(&name) else {
+            warnings.push(format!("config: unknown key action `{name}`"));
+            continue;
+        };
+        let specs: Vec<String> = match value {
+            toml::Value::String(spec) => vec![spec],
+            toml::Value::Array(items) => {
+                let mut specs = Vec::new();
+                for item in items {
+                    match item {
+                        toml::Value::String(spec) => specs.push(spec),
+                        other => {
+                            warnings.push(format!(
+                                "config: keys.{name} entry `{other}` must be a string"
+                            ));
+                        }
+                    }
+                }
+                specs
+            }
+            other => {
+                warnings.push(format!(
+                    "config: keys.{name}=`{other}` must be a string or array of strings"
+                ));
+                continue;
+            }
+        };
+        let mut combos = Vec::new();
+        for spec in specs {
+            match keymap::parse_combo(&spec) {
+                Ok(combo) => combos.push(combo),
+                Err(err) => warnings.push(format!("config: keys.{name}: {err}")),
+            }
+        }
+        if !combos.is_empty() {
+            warnings.extend(keymap.rebind(action, combos));
+        }
+    }
+    warn_new_collisions(&keymap, &default_global, warnings);
+    keymap
+}
+
+/// Warns about combos that only became ambiguous because of this config
+/// (never about the shipped defaults, some of which intentionally reuse a
+/// combo across groups that are actually mutually exclusive at dispatch
+/// time — see `key()`'s Global-lookup doc comment and
+/// `keymap::reserved_combos`).
+///
+/// Two hazards, both because `key()` checks the `Global` keymap before
+/// anything else reachable at that point in the dispatch order:
+/// - A combo bound in both `Global` and `Lists` — the `Lists` action
+///   becomes unreachable; `Global` always wins.
+/// - A `Global` combo that collides with a hardcoded, non-remappable
+///   context's key (Attention/Session detail/Run detail/etc., or the
+///   `Ctrl+C` quit-guard) — the hardcoded handler becomes unreachable for
+///   that combo while `Global`'s lookup runs first.
+///
+/// Warning only, per the config's warn-don't-crash convention: neither
+/// hazard blocks config load or is auto-resolved differently.
+fn warn_new_collisions(
+    keymap: &Keymap,
+    default_global: &std::collections::HashSet<keymap::KeyCombo>,
+    warnings: &mut Vec<String>,
+) {
+    let global = keymap.bound_combos(ContextGroup::Global);
+    let lists = keymap.bound_combos(ContextGroup::Lists);
+    let mut cross_group: Vec<String> = global
+        .intersection(&lists)
+        .map(keymap::combo_display)
+        .collect();
+    cross_group.sort();
+    for combo in cross_group {
+        warnings.push(format!(
+            "config: keys: `{combo}` is bound in both a Global and a Lists action — Global always wins, the Lists action is unreachable for it"
+        ));
+    }
+
+    let reserved = keymap::reserved_combos();
+    let mut shadowed: Vec<String> = global
+        .difference(default_global)
+        .filter(|combo| reserved.contains(combo))
+        .map(keymap::combo_display)
+        .collect();
+    shadowed.sort();
+    for combo in shadowed {
+        warnings.push(format!(
+            "config: keys: Global combo `{combo}` shadows a hardcoded key in a non-remappable context (e.g. Attention, Session detail, Run detail) — that context's binding is unreachable for it"
+        ));
+    }
 }
 
 fn parse_transport(value: Option<&str>) -> Option<DaemonArg> {
@@ -299,6 +429,28 @@ fn parse_theme(value: Option<&str>) -> Option<ThemeMode> {
         Some("dark") => Some(ThemeMode::Dark),
         Some("light") => Some(ThemeMode::Light),
         _ => None,
+    }
+}
+
+fn parse_color_depth(value: Option<&str>) -> Option<ColorDepthMode> {
+    match value {
+        Some("auto") => Some(ColorDepthMode::Auto),
+        Some("ansi16") => Some(ColorDepthMode::Ansi16),
+        _ => None,
+    }
+}
+
+/// Resolves the config-facing `ColorDepthMode` to a concrete `ColorDepth`.
+/// This is the only place in `crates/batuta` allowed to interpret
+/// `COLORTERM`; the TUI crate never reads it. `Auto` becomes `TrueColor`
+/// iff `COLORTERM` is `truecolor` or `24bit`, otherwise `Ansi16`.
+pub fn resolve_color_depth(mode: ColorDepthMode, colorterm: Option<&str>) -> ColorDepth {
+    match mode {
+        ColorDepthMode::Ansi16 => ColorDepth::Ansi16,
+        ColorDepthMode::Auto => match colorterm {
+            Some("truecolor" | "24bit") => ColorDepth::TrueColor,
+            _ => ColorDepth::Ansi16,
+        },
     }
 }
 
@@ -337,7 +489,16 @@ fn unknown_key_warnings(value: &toml::Value) -> Vec<String> {
         ("daemon", ["transport", "tcp_addr"].as_slice()),
         (
             "ui",
-            ["color", "theme", "fps", "sessions_limit", "runs_limit"].as_slice(),
+            [
+                "color",
+                "theme",
+                "color_depth",
+                "fps",
+                "sessions_limit",
+                "runs_limit",
+                "notify",
+            ]
+            .as_slice(),
         ),
     ];
     let mut warnings = Vec::new();
@@ -345,6 +506,12 @@ fn unknown_key_warnings(value: &toml::Value) -> Vec<String> {
         return warnings;
     };
     for (key, value) in table {
+        // `keys` is data-driven (action names, validated separately by
+        // `resolve_keymap` via `keymap::action_by_name`), so its children
+        // are never flagged here as unknown top-level keys.
+        if key == "keys" {
+            continue;
+        }
         let Some((_, keys)) = allowed.iter().find(|(section, _)| section == key) else {
             warnings.push(format!("config: unknown key {key}"));
             continue;
@@ -400,6 +567,177 @@ mod tests {
         assert_eq!(settings.ui.fps, 25);
         assert_eq!(settings.ui.sessions_limit, 2);
         assert_eq!(settings.ui.runs_limit, 3);
+    }
+
+    #[test]
+    fn ut_761_notify_key_resolves_and_defaults_true() {
+        let temp = tempdir().unwrap();
+        let path = temp.path().join("config.toml");
+        fs::write(&path, "[ui]\nnotify=false\n").unwrap();
+        let mut value = cli();
+        value.config = Some(path);
+        let settings = load_and_resolve(&value, &Env::default()).unwrap();
+        assert!(!settings.ui.notify);
+
+        let mut missing = cli();
+        missing.config = Some(temp.path().join("missing.toml"));
+        let settings = load_and_resolve(&missing, &Env::default()).unwrap();
+        assert!(settings.ui.notify);
+    }
+
+    #[test]
+    fn ut_770_color_depth_reads_file_warns_on_invalid_and_no_color_still_wins() {
+        // File value is read.
+        let temp = tempdir().unwrap();
+        let path = temp.path().join("config.toml");
+        fs::write(&path, "[ui]\ncolor_depth='ansi16'\n").unwrap();
+        let mut value = cli();
+        value.config = Some(path);
+        let settings = load_and_resolve(&value, &Env::default()).unwrap();
+        assert_eq!(settings.ui.color_depth, ColorDepthMode::Ansi16);
+
+        // Missing key defaults to Auto.
+        let mut missing = cli();
+        missing.config = Some(temp.path().join("missing.toml"));
+        let settings = load_and_resolve(&missing, &Env::default()).unwrap();
+        assert_eq!(settings.ui.color_depth, ColorDepthMode::Auto);
+
+        // Invalid value warns and falls back to Auto.
+        let bad_temp = tempdir().unwrap();
+        let bad_path = bad_temp.path().join("config.toml");
+        fs::write(&bad_path, "[ui]\ncolor_depth='bogus'\n").unwrap();
+        let mut bad = cli();
+        bad.config = Some(bad_path);
+        let settings = load_and_resolve(&bad, &Env::default()).unwrap();
+        assert_eq!(settings.ui.color_depth, ColorDepthMode::Auto);
+        assert!(
+            settings
+                .warnings
+                .iter()
+                .any(|warning| warning.contains("color_depth"))
+        );
+
+        // NO_COLOR still wins end-to-end even with a truecolor-capable
+        // terminal and Auto depth.
+        let env = Env {
+            workspace: None,
+            no_color: true,
+        };
+        let settings = load_and_resolve(&missing, &env).unwrap();
+        assert_eq!(settings.ui.color, ColorMode::Never);
+        let depth = resolve_color_depth(settings.ui.color_depth, Some("truecolor"));
+        assert_eq!(depth, ColorDepth::TrueColor);
+        let theme = batuta_tui::theme::Theme::with_options(
+            settings.ui.color != ColorMode::Never,
+            settings.ui.theme.into(),
+            None,
+            depth,
+        );
+        assert_eq!(
+            theme.style(batuta_tui::theme::SemanticToken::Active).fg,
+            None
+        );
+    }
+
+    #[test]
+    fn ut_778_keys_table_resolves_rebinds_and_warns_on_unknown_action_or_bad_combo() {
+        let temp = tempdir().unwrap();
+        let path = temp.path().join("config.toml");
+        fs::write(
+            &path,
+            "[keys]\nquit = 'x'\nfilter = ['ctrl+f']\nbogus_action = 'z'\nrefresh = 'meh'\n",
+        )
+        .unwrap();
+        let mut value = cli();
+        value.config = Some(path);
+        let settings = load_and_resolve(&value, &Env::default()).unwrap();
+
+        // quit was rebound to `x`.
+        let x = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Char('x'),
+            crossterm::event::KeyModifiers::NONE,
+        );
+        assert_eq!(
+            settings
+                .keymap
+                .action(batuta_tui::keymap::ContextGroup::Global, &x),
+            Some(batuta_tui::keymap::Action::Quit)
+        );
+        // filter accepts an array form and was rebound to ctrl+f.
+        let ctrl_f = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Char('f'),
+            crossterm::event::KeyModifiers::CONTROL,
+        );
+        assert_eq!(
+            settings
+                .keymap
+                .action(batuta_tui::keymap::ContextGroup::Lists, &ctrl_f),
+            Some(batuta_tui::keymap::Action::Filter)
+        );
+        // unknown action name and unparsable combo warn rather than error.
+        assert!(
+            settings
+                .warnings
+                .iter()
+                .any(|warning| warning.contains("unknown key action `bogus_action`"))
+        );
+        assert!(
+            settings
+                .warnings
+                .iter()
+                .any(|warning| warning.contains("keys.refresh"))
+        );
+    }
+
+    #[test]
+    fn ut_781_keys_table_warns_on_cross_group_and_reserved_collisions() {
+        let temp = tempdir().unwrap();
+        let path = temp.path().join("config.toml");
+        // `filter` (Lists) stolen by `q` — Global's `quit` already owns
+        // `q`, so `filter` becomes unreachable (Global is checked first).
+        // `workspace` (Global) rebound to `a`, colliding with Attention's
+        // hardcoded `a` (approve) — a genuinely new overlap, not one of
+        // the shipped defaults' safe (dispatch-gated) reuses.
+        fs::write(&path, "[keys]\nfilter = 'q'\nworkspace = 'a'\n").unwrap();
+        let mut value = cli();
+        value.config = Some(path);
+        let settings = load_and_resolve(&value, &Env::default()).unwrap();
+
+        assert!(
+            settings.warnings.iter().any(|warning| {
+                warning.contains("`q`") && warning.contains("both a Global and a Lists action")
+            }),
+            "expected a cross-group collision warning, got: {:?}",
+            settings.warnings
+        );
+        assert!(
+            settings.warnings.iter().any(|warning| {
+                warning.contains("`a`") && warning.contains("shadows a hardcoded key")
+            }),
+            "expected a reserved-combo shadow warning, got: {:?}",
+            settings.warnings
+        );
+    }
+
+    #[test]
+    fn ut_782_default_keys_table_never_warns_about_collisions() {
+        // The shipped defaults reuse a few combos across Global and a
+        // hardcoded context (e.g. `logs` = `L`, which the Logs overlay
+        // also reads to close) — those are safe because the earlier
+        // handler is checked first in `key()`, and must never warn on
+        // their own.
+        let temp = tempdir().unwrap();
+        let mut value = cli();
+        value.config = Some(temp.path().join("missing.toml"));
+        let settings = load_and_resolve(&value, &Env::default()).unwrap();
+        assert!(
+            settings
+                .warnings
+                .iter()
+                .all(|warning| !warning.contains("collision") && !warning.contains("shadows")),
+            "unexpected collision warning with no [keys] table: {:?}",
+            settings.warnings
+        );
     }
 
     #[test]
