@@ -162,12 +162,22 @@ impl TranscriptState {
         if delta.epoch != self.epoch || delta.generation != self.generation {
             return Applied::FenceMismatch;
         }
-        if let Some(entry) = delta
-            .entries
-            .iter()
-            .find(|entry| !self.entries.contains_key(&entry.start_sequence))
-        {
-            return Applied::UnknownStart(entry.start_sequence);
+        // The stream resumes right after our cursor, so an unknown entry that
+        // begins exactly at the next sequence is new tail content and can be
+        // appended: forcing a page refetch there is what delayed new messages.
+        // Any other unknown start is a real gap and still refetches.
+        let mut frontier = self.max_sequence;
+        for entry in &delta.entries {
+            if self.entries.contains_key(&entry.start_sequence) {
+                frontier = frontier.max(entry.sequence);
+                continue;
+            }
+            // Observed against a live daemon: a following entry begins either at
+            // the previous entry's sequence or one past it, never further ahead.
+            if !(frontier..=frontier.saturating_add(1)).contains(&entry.start_sequence) {
+                return Applied::UnknownStart(entry.start_sequence);
+            }
+            frontier = frontier.max(entry.sequence).max(entry.start_sequence);
         }
         for entry in delta.entries {
             self.entries.insert(entry.start_sequence, entry);
@@ -229,7 +239,7 @@ fn is_failed_tool_state(state: Option<&str>) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use compozy_client::types::{Role, UiMessage};
+    use compozy_client::types::{Role, TranscriptDelta, UiMessage};
 
     fn entry(sequence: i64, part: Part) -> Entry {
         Entry {
@@ -279,6 +289,91 @@ mod tests {
         let text = entry_plain_text(&tool);
         assert!(text.contains("bash"));
         assert!(text.contains("ls -la"));
+    }
+
+    #[test]
+    fn ut_788_tail_appends_apply_and_history_gaps_still_refetch() {
+        let mut state = transcript((1..=3).map(|sequence| {
+            entry(
+                sequence,
+                Part::Text {
+                    text: format!("entrada {sequence}"),
+                    state: None,
+                },
+            )
+        }));
+        state.max_sequence = 3;
+
+        // A brand new message arrives at the tail: append it, do not refetch.
+        let applied = state.apply_delta(TranscriptDelta {
+            entries: vec![entry(
+                4,
+                Part::Text {
+                    text: "mensagem nova".into(),
+                    state: None,
+                },
+            )],
+            max_sequence: 4,
+            cursor: 4,
+            ..TranscriptDelta::default()
+        });
+        assert_eq!(applied, Applied::Ok);
+        assert_eq!(state.len(), 4);
+        assert!(state.entry(4).is_some());
+
+        // Some entries begin exactly at the previous entry's sequence.
+        let applied = state.apply_delta(TranscriptDelta {
+            entries: vec![entry(
+                4,
+                Part::Text {
+                    text: "mesma sequencia".into(),
+                    state: None,
+                },
+            )],
+            max_sequence: 4,
+            cursor: 4,
+            ..TranscriptDelta::default()
+        });
+        assert_eq!(applied, Applied::Ok);
+
+        // A hole below the tail is a real gap: keep forcing a page refetch.
+        let mut holed = transcript([entry(
+            9,
+            Part::Text {
+                text: "tarde".into(),
+                state: None,
+            },
+        )]);
+        holed.max_sequence = 9;
+        let applied = holed.apply_delta(TranscriptDelta {
+            entries: vec![entry(
+                5,
+                Part::Text {
+                    text: "faltando".into(),
+                    state: None,
+                },
+            )],
+            max_sequence: 9,
+            cursor: 9,
+            ..TranscriptDelta::default()
+        });
+        assert_eq!(applied, Applied::UnknownStart(5));
+
+        // Without a baseline snapshot we must still refetch.
+        let mut empty = TranscriptState::default();
+        let applied = empty.apply_delta(TranscriptDelta {
+            entries: vec![entry(
+                2,
+                Part::Text {
+                    text: "sem base".into(),
+                    state: None,
+                },
+            )],
+            max_sequence: 2,
+            cursor: 2,
+            ..TranscriptDelta::default()
+        });
+        assert_eq!(applied, Applied::UnknownStart(2));
     }
 
     #[test]
