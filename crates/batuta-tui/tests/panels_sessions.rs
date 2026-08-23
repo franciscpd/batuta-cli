@@ -30,19 +30,27 @@ fn ut_460_sessions_rows_snapshot() {
 }
 
 #[test]
-fn ut_461_star_toggles_agent_query_and_title() {
+fn ut_461_star_toggles_preset_scope_and_title() {
     let mut model = model();
     load(&mut model);
+    assert!(render(&model, 100, 30).contains("Sessions · all sessions"));
     let commands = update(&mut model, key(KeyCode::Char('*')));
     assert!(matches!(
         &commands[0],
-        Cmd::Get(Request::Sessions { agent: None, .. })
+        Cmd::Get(Request::Sessions { agent: Some(agent), session_type: Some(kind), .. })
+            if agent == "batuta" && kind == "user"
     ));
-    assert!(render(&model, 100, 30).contains("Sessions · all agents"));
+    assert!(render(&model, 100, 30).contains("Sessions · batuta"));
     let commands = update(&mut model, key(KeyCode::Char('*')));
-    assert!(
-        matches!(&commands[0], Cmd::Get(Request::Sessions { agent: Some(agent), .. }) if agent == "batuta")
-    );
+    assert!(matches!(
+        &commands[0],
+        Cmd::Get(Request::Sessions {
+            agent: None,
+            session_type: None,
+            ..
+        })
+    ));
+    assert!(render(&model, 100, 30).contains("Sessions · all sessions"));
 }
 
 #[test]

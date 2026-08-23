@@ -13,7 +13,7 @@ use serde::Serialize;
 #[derive(Clone, Debug)]
 pub struct SessionQuery<'a> {
     pub workspace: &'a str,
-    pub type_: &'a str,
+    pub type_: Option<&'a str>,
     pub sort: &'a str,
     pub limit: u64,
     pub agent: Option<&'a str>,
@@ -46,9 +46,11 @@ impl Client {
             let mut serializer = Serializer::new(String::new());
             serializer
                 .append_pair("workspace", query.workspace)
-                .append_pair("type", query.type_)
                 .append_pair("sort", query.sort)
                 .append_pair("limit", &query.limit.to_string());
+            if let Some(type_) = query.type_ {
+                serializer.append_pair("type", type_);
+            }
             if let Some(agent) = query.agent {
                 serializer.append_pair("agent", agent);
             }

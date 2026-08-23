@@ -62,6 +62,7 @@ pub enum Request {
         id: RequestId,
         workspace: String,
         agent: Option<String>,
+        session_type: Option<String>,
         limit: u64,
     },
     Session {

@@ -11,10 +11,10 @@ use ratatui::{
 };
 
 pub fn render(model: &Model, frame: &mut Frame<'_>, area: Rect, offline: bool) {
-    let scope = if model.sessions_all_agents {
-        "all agents"
-    } else {
+    let scope = if model.sessions_preset_only {
         &model.settings.preset.agent
+    } else {
+        "all sessions"
     };
     let suffix = if model.sessions.filter.is_empty() {
         String::new()

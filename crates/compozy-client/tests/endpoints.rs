@@ -23,7 +23,7 @@ fn client(server: &MockServer) -> Client {
 fn session_query<'a>() -> SessionQuery<'a> {
     SessionQuery {
         workspace: "ws_e619d7250e618324",
-        type_: "user",
+        type_: Some("user"),
         sort: "recent",
         limit: 20,
         agent: Some("batuta"),
@@ -55,7 +55,7 @@ async fn ut_021_sessions_sends_exact_query_and_decodes_page() {
     let requests = server.received_requests().await.expect("requests");
     assert_eq!(
         requests[0].url.query(),
-        Some("workspace=ws_e619d7250e618324&type=user&sort=recent&limit=20&agent=batuta")
+        Some("workspace=ws_e619d7250e618324&sort=recent&limit=20&type=user&agent=batuta")
     );
 }
 

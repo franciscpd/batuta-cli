@@ -50,12 +50,13 @@ impl RuntimeClient for Client {
                 Request::Sessions {
                     workspace,
                     agent,
+                    session_type,
                     limit,
                     ..
                 } => client
                     .sessions(&SessionQuery {
                         workspace: &workspace,
-                        type_: "user",
+                        type_: session_type.as_deref(),
                         sort: "recent",
                         limit,
                         agent: agent.as_deref(),

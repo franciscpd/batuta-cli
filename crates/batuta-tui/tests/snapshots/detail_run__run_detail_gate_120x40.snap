@@ -4,7 +4,7 @@ expression: "render(&model, 120, 40)"
 ---
 "batuta · ws: workspace ▾ · daemon running · 0 attention                                                                 "
 "warning: daemon version dev — compatibility unverified (floor v0.3.0-beta.16)                                           "
-"┌[1] Sessions · batuta─────────────────────────┐┌[4] Run · looprun-parent──────────────────────────────────────────────┐"
+"┌[1] Sessions · all sessions───────────────────┐┌[4] Run · looprun-parent──────────────────────────────────────────────┐"
 "│no sessions — press n to start one            ││looprun-parent · batuta-deliver · running · gen 1                     │"
 "└──────────────────────────────────────────────┘│started 20:05:52  last progress 22:46:28  parent looprun-root         │"
 "┌[2] Deliver runs · batuta-deliver─────────────┐│inputs  auto_commit=true  slug=mvp-tui                                │"

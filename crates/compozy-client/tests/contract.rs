@@ -83,7 +83,7 @@ async fn it_100_through_110(daemon: &Daemon) {
 
     let query = SessionQuery {
         workspace,
-        type_: "user",
+        type_: Some("user"),
         sort: "recent",
         limit: 20,
         agent: Some("batuta"),
@@ -298,7 +298,7 @@ async fn it_001_through_006(daemon: &Daemon) {
 
     let query = SessionQuery {
         workspace: daemon.workspace_id(),
-        type_: "user",
+        type_: Some("user"),
         sort: "recent",
         limit: 20,
         agent: Some("batuta"),

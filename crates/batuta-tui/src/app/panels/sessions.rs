@@ -6,12 +6,15 @@ use compozy_client::types::SessionPage;
 
 pub fn request(model: &mut Model) -> Option<Cmd> {
     let workspace = model.workspace.as_ref()?.id.clone();
-    let agent = (!model.sessions_all_agents).then(|| model.settings.preset.agent.clone());
+    let preset_only = model.sessions_preset_only;
+    let agent = preset_only.then(|| model.settings.preset.agent.clone());
+    let session_type = preset_only.then(|| "user".to_owned());
     let limit = model.settings.ui.sessions_limit;
     Some(Cmd::Get(model.allocate(|id| Request::Sessions {
         id,
         workspace,
         agent,
+        session_type,
         limit,
     })))
 }
