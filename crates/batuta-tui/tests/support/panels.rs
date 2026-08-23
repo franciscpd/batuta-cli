@@ -86,7 +86,8 @@ pub fn sessions_request(id: u64) -> Request {
     Request::Sessions {
         id: RequestId(id),
         workspace: "ws-test".into(),
-        agent: Some("batuta".into()),
+        agent: None,
+        session_type: None,
         limit: 50,
     }
 }

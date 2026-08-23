@@ -65,7 +65,7 @@ back to `~/.config/batuta/config.toml`:
 ```toml
 # ~/.config/batuta/config.toml
 [preset]
-agent = "batuta"          # sessions filter and `n` new-session agent
+agent = "batuta"          # preset-focus filter (`*`) and `n` new-session agent
 loop = "batuta-deliver"   # runs filter (`?loop=`)
 provider = "claude"       # runtime.provider sent with the first prompt of a session created by `n`
 model = ""                # runtime.model; empty = provider default
@@ -160,7 +160,7 @@ These are the defaults. Global and Lists rows are configurable via the
 | Lists | `j`/`↓`, `k`/`↑`, `PgUp`, `PgDn`, `g`, `G` | move / jump |
 | Lists | `Enter` | open in `[4]` |
 | Lists | `/` | filter (type, `Enter` keep, `Esc` clear) |
-| Lists | `*` | toggle preset filter (all agents / all loops) |
+| Lists | `*` | toggle scope (sessions: all sessions ↔ preset agent; runs: all loops ↔ preset loop) |
 | Lists | `r` | refresh now |
 | Lists | `y` | yank selected id |
 | Sessions | `n` | new session with preset agent |

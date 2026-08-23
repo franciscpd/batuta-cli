@@ -49,7 +49,7 @@ pub async fn run(
     let page = client
         .sessions(&SessionQuery {
             workspace: &workspace.id,
-            type_: "user",
+            type_: Some("user"),
             sort: "recent",
             limit: limit as u64,
             agent: (!all_agents).then_some("batuta"),

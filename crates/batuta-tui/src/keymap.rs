@@ -76,7 +76,7 @@ pub const BINDINGS: &[Binding] = &[
     Binding {
         context: Context::Lists,
         keys: "*/r",
-        action: "all/refresh",
+        action: "preset/refresh",
     },
     Binding {
         context: Context::Lists,
@@ -893,7 +893,7 @@ const DYNAMIC_ROWS: &[DynamicRow] = &[
                 joined_combos(keymap, Action::Refresh)
             )
         },
-        action: "all/refresh",
+        action: "preset/refresh",
     },
     DynamicRow {
         context: Context::Lists,
@@ -1054,7 +1054,7 @@ mod tests {
                 &[Context::Global, Context::Lists, Context::Sessions],
                 &keymap
             ),
-            "1-4 focus  Tab/Shift+Tab next/previous  w workspace  L logs  ?/F1 help  q/Ctrl+C quit  j/k/↑/↓/PgUp/PgDn/g/G move  Enter open  / filter  */r all/refresh  y yank id  n new session"
+            "1-4 focus  Tab/Shift+Tab next/previous  w workspace  L logs  ?/F1 help  q/Ctrl+C quit  j/k/↑/↓/PgUp/PgDn/g/G move  Enter open  / filter  */r preset/refresh  y yank id  n new session"
         );
     }
 

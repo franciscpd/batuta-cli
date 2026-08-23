@@ -4,7 +4,7 @@ expression: "render(&model, 100, 30)"
 ---
 "batuta · ws: workspace ▾ · daemon running · 0 attention                                             "
 "warning: daemon version dev — compatibility unverified (floor v0.3.0-beta.16)                       "
-"┌[1] Sessions · batuta─────────────────┐┌[4] Detail────────────────────────────────────────────────┐"
+"┌[1] Sessions · all sessions───────────┐┌[4] Detail────────────────────────────────────────────────┐"
 "│> ● batuta  spike plan  0s            ││select a session or run                                   │"
 "│  ■ general  —  1d                    ││                                                          │"
 "│more (limit 50)                       ││                                                          │"

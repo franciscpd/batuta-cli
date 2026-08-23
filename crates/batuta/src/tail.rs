@@ -144,7 +144,7 @@ fn apply_settings(model: &mut Model, preset: Preset, ui: UiSettings, keymap: Key
 fn selection_query(workspace: &str, all_agents: bool) -> SessionQuery<'_> {
     SessionQuery {
         workspace,
-        type_: "user",
+        type_: Some("user"),
         sort: "recent",
         limit: 1,
         agent: (!all_agents).then_some("batuta"),
@@ -198,7 +198,7 @@ mod tests {
         let query = selection_query("ws", false);
         assert_eq!(query.workspace, "ws");
         assert_eq!(query.agent, Some("batuta"));
-        assert_eq!(query.type_, "user");
+        assert_eq!(query.type_, Some("user"));
         assert_eq!(query.sort, "recent");
         assert_eq!(query.limit, 1);
     }

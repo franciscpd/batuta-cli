@@ -523,7 +523,7 @@ pub struct Model {
     pub attention_confirm: Option<(usize, Decision)>,
     pub inline_permission_confirm: Option<(String, ApproveRequest)>,
     pub sessions_unfiltered: Vec<SessionRow>,
-    pub sessions_all_agents: bool,
+    pub sessions_preset_only: bool,
     pub sessions_has_more: bool,
     pub catalog_debounce_armed: bool,
     pub create_session_pending: bool,
@@ -581,7 +581,7 @@ impl Model {
             attention_confirm: None,
             inline_permission_confirm: None,
             sessions_unfiltered: Vec::new(),
-            sessions_all_agents: false,
+            sessions_preset_only: false,
             sessions_has_more: false,
             catalog_debounce_armed: false,
             create_session_pending: false,
@@ -737,14 +737,17 @@ impl Model {
             let request = self.allocate(|id| Request::Workspaces { id });
             return vec![Cmd::Get(request), Cmd::Render];
         };
-        let agent = self.settings.preset.agent.clone();
+        let preset_only = self.sessions_preset_only;
+        let agent = preset_only.then(|| self.settings.preset.agent.clone());
+        let session_type = preset_only.then(|| "user".to_owned());
         let sessions_limit = self.settings.ui.sessions_limit;
         let loop_name = self.settings.preset.loop_name.clone();
         let runs_limit = self.settings.ui.runs_limit;
         let sessions = self.allocate(|id| Request::Sessions {
             id,
             workspace: workspace.id.clone(),
-            agent: Some(agent),
+            agent,
+            session_type,
             limit: sessions_limit,
         });
         let runs = self.allocate(|id| Request::Runs {

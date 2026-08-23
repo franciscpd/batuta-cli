@@ -4,7 +4,7 @@ use crate::{
 };
 
 pub(super) fn toggle_agent(model: &mut Model) -> Vec<Cmd> {
-    model.sessions_all_agents = !model.sessions_all_agents;
+    model.sessions_preset_only = !model.sessions_preset_only;
     model.dirty = true;
     sessions::request(model).into_iter().collect()
 }

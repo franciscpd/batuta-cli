@@ -241,6 +241,7 @@ async fn it_008_draining_with_zero_sessions_keeps_the_normal_empty_state() {
         id,
         workspace: daemon.workspace_id().to_owned(),
         agent: Some("batuta".into()),
+        session_type: None,
         limit: 50,
     });
     execute(&mut model, &client, sessions).await;
