@@ -89,8 +89,16 @@ fn render_entry(
         format!("▸ {role}"),
         theme.emphasis,
     )));
+    let is_user = matches!(entry.message.role, Role::User);
     for part in &entry.message.parts {
-        render_part(part, theme, reasoning_expanded, expanded, &mut lines);
+        render_part(
+            part,
+            is_user,
+            theme,
+            reasoning_expanded,
+            expanded,
+            &mut lines,
+        );
     }
     lines.push(Line::default());
     Text::from(wrap_lines(
@@ -101,6 +109,7 @@ fn render_entry(
 
 fn render_part(
     part: &Part,
+    is_user: bool,
     theme: &Theme,
     reasoning_expanded: bool,
     expanded: bool,
@@ -108,7 +117,14 @@ fn render_part(
 ) {
     match part {
         Part::Text { text, state } => {
-            let mut rendered = markdown_text(text);
+            // The web app preserves the line breaks a person typed; markdown
+            // alone collapses them. Hard-break user prose, keep agent output
+            // as pure markdown.
+            let mut rendered = if is_user {
+                markdown_text(&crate::views::markdown::preserve_line_breaks(text))
+            } else {
+                markdown_text(text)
+            };
             if !theme.color {
                 for line in &mut rendered.lines {
                     line.style = modifiers_only(line.style);
@@ -384,6 +400,52 @@ mod tests {
                 parts,
             },
         }
+    }
+
+    #[test]
+    fn ut_787_user_text_preserves_typed_line_breaks() {
+        let mut user = entry(vec![Part::Text {
+            text: "linha um\nlinha dois".into(),
+            state: None,
+        }]);
+        user.message.role = Role::User;
+        let rendered = render_entry(&user, "agent", &Theme::new(true), 80, false, false, false);
+        let text = rendered
+            .lines
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(text.contains("linha um"));
+        assert!(text.contains("linha dois"));
+        assert!(
+            !text.contains("linha um linha dois"),
+            "breaks collapsed: {text}"
+        );
+
+        let assistant = entry(vec![Part::Text {
+            text: "linha um\nlinha dois".into(),
+            state: None,
+        }]);
+        let rendered = render_entry(
+            &assistant,
+            "agent",
+            &Theme::new(true),
+            80,
+            false,
+            false,
+            false,
+        );
+        let text = rendered
+            .lines
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(
+            text.contains("linha um linha dois"),
+            "assistant markdown should collapse: {text}"
+        );
     }
 
     #[test]
