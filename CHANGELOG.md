@@ -1,8 +1,41 @@
+## [v0.1.0-beta.6] - 2026-08-23
+
+### 🚀 Features
+
+- *(tui)* Notify on attention when terminal unfocused
+- *(tui)* Yank ids and transcript entries via OSC 52
+- *(tui)* Search transcript with / and n/N
+- *(tui)* Truecolor palette behind color_depth
+- *(tui)* Configurable global and list keybindings
+- *(tui)* Command palette on ctrl+p
+
+### 🐛 Bug Fixes
+
+- Use tag-pinned release URLs for prebuilt install
+- *(tui)* Recompute transcript search on raw_debug toggle
+- *(tui)* Apply documented truecolor default fg for dark prose
+- *(tui)* Tail-mode keymap/warnings, keymap collision warnings, docs
+- *(tui)* Keep the command palette inert in TailOnly mode
+- *(tui)* Gate detail search/yank in TailOnly, fix shift+letter combos
+
+### 📚 Documentation
+
+- Add UX improvements plan
+- Document prebuilt release install
+- Add explicit cue for version substitution in install example
+
+### 🧪 Testing
+
+- *(tui)* Renumber config keys-table test to avoid ut_ collision
 ## [v0.1.0-beta.5] - 2026-08-21
 
 ### 🐛 Bug Fixes
 
 - Preserve explicit panel focus
+
+### 💼 Other
+
+- V0.1.0-beta.5
 
 ### 🧪 Testing
 
