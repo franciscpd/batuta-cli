@@ -1,3 +1,8 @@
+## [v0.1.0-beta.8] - 2026-08-23
+
+### ⚙️ Miscellaneous Tasks
+
+- Ignore local .claude directory
 ## [v0.1.0-beta.7] - 2026-08-23
 
 ### 🚀 Features
@@ -7,6 +12,11 @@
 ### 🐛 Bug Fixes
 
 - *(tui)* Preserve typed line breaks in user messages
+- *(tui)* Apply new transcript entries without a refetch
+
+### 💼 Other
+
+- V0.1.0-beta.7
 ## [v0.1.0-beta.6] - 2026-08-23
 
 ### 🚀 Features
