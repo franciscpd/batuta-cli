@@ -1,3 +1,12 @@
+## [v0.1.0-beta.7] - 2026-08-23
+
+### 🚀 Features
+
+- *(tui)* List all sessions by default
+
+### 🐛 Bug Fixes
+
+- *(tui)* Preserve typed line breaks in user messages
 ## [v0.1.0-beta.6] - 2026-08-23
 
 ### 🚀 Features
@@ -17,6 +26,10 @@
 - *(tui)* Tail-mode keymap/warnings, keymap collision warnings, docs
 - *(tui)* Keep the command palette inert in TailOnly mode
 - *(tui)* Gate detail search/yank in TailOnly, fix shift+letter combos
+
+### 💼 Other
+
+- V0.1.0-beta.6
 
 ### 📚 Documentation
 
